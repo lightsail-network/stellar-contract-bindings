@@ -1,0 +1,19 @@
+[project]
+name = "stellar-contract-bindings"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "jinja2>=3.1.4",
+    "stellar-sdk",
+]
+
+[tool.uv.sources]
+stellar-sdk = { path = "../py-stellar-base" }
+
+[dependency-groups]
+dev = [
+    "black>=24.10.0",
+    "pytest>=8.3.3",
+]
