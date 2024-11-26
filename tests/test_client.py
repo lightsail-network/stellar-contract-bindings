@@ -1,4 +1,6 @@
+import pytest
 from stellar_sdk import Network
+from stellar_sdk.contract.exceptions import SimulationFailedError
 
 from .client import *
 
@@ -25,11 +27,11 @@ class TestClient:
         assert result.result() is None
 
     def test_u32_fail_on_even(self):
-        result = self.client.u32(1)
+        result = self.client.u32_fail_on_even(1)
         assert result.result() == 1
 
-        result = self.client.u32(2)
-        assert result.result() == 2
+        with pytest.raises(SimulationFailedError):
+            self.client.u32_fail_on_even(2)
 
     def test_u32(self):
         result = self.client.u32(34543534)
