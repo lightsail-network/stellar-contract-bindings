@@ -3,7 +3,7 @@ from typing import List
 from jinja2 import Template
 from stellar_sdk import xdr
 
-from metadata import parse_contract_metadata
+from .metadata import parse_contract_metadata
 
 
 def is_tuple_struct(entry: xdr.SCSpecUDTStructV0) -> bool:
@@ -24,8 +24,7 @@ def camel_to_snake(text: str) -> str:
 def to_py_type(td: xdr.SCSpecTypeDef):
     t = td.type
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VAL:
-        # TODO: u64?
-        return "int"
+       raise NotImplementedError("SC_SPEC_TYPE_VAL is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BOOL:
         return "bool"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:
@@ -201,7 +200,7 @@ from typing import Dict, List, Tuple, Optional
 from stellar_sdk import scval, xdr, Address
 from stellar_sdk.contract import AssembledTransaction, ContractClient
 """
-    print(template)
+    return template
 
 
 def render_enum(entry: xdr.SCSpecUDTEnumV0):
@@ -223,7 +222,7 @@ class {{ entry.name.decode() }}(IntEnum):
 
     template = Template(template)
     rendered_code = template.render(entry=entry)
-    print(rendered_code)
+    return rendered_code
 
 
 def render_error_enum(entry: xdr.SCSpecUDTErrorEnumV0):
@@ -245,7 +244,7 @@ class {{ entry.name.decode() }}(IntEnum):
 
     template = Template(template)
     rendered_code = template.render(entry=entry)
-    print(rendered_code)
+    return rendered_code
 
 
 def render_struct(entry: xdr.SCSpecUDTStructV0):
@@ -292,7 +291,7 @@ class {{ entry.name.decode() }}:
     rendered_code = template.render(
         entry=entry, to_py_type=to_py_type, to_scval=to_scval, from_scval=from_scval, enumerate=enumerate
     )
-    print(rendered_code)
+    return rendered_code
 
 
 def render_tuple_struct(entry: xdr.SCSpecUDTStructV0):
@@ -327,7 +326,7 @@ class {{ entry.name.decode() }}:
     rendered_code = template.render(
         entry=entry, to_py_type=to_py_type, to_scval=to_scval, from_scval=from_scval
     )
-    print(rendered_code)
+    return rendered_code
 
 
 def render_union(entry: xdr.SCSpecUDTUnionV0):
@@ -343,8 +342,7 @@ class {{ entry.name.decode() }}Kind(Enum):
 """
 
     kind_enum_template = Template(kind_enum_template)
-    rendered_code = kind_enum_template.render(entry=entry, xdr=xdr)
-    print(rendered_code)
+    kind_enum_rendered_code = kind_enum_template.render(entry=entry, xdr=xdr)
 
     template = """
 class {{ entry.name.decode() }}:
@@ -435,7 +433,7 @@ class {{ entry.name.decode() }}:
         return hash(self.kind)
 """
     template = Template(template)
-    rendered_code = template.render(
+    union_rendered_code = template.render(
         entry=entry,
         to_py_type=to_py_type,
         to_scval=to_scval,
@@ -445,7 +443,7 @@ class {{ entry.name.decode() }}:
         camel_to_snake=camel_to_snake,
         enumerate=enumerate
     )
-    print(rendered_code)
+    return kind_enum_rendered_code + '\n' + union_rendered_code
 
 
 def render_client(entries: List[xdr.SCSpecFunctionV0]):
@@ -477,41 +475,48 @@ class Client(ContractClient):
             raise NotImplementedError("Tuple return type is not supported, please report this issue")
 
     template = Template(template)
-    rendered_code = template.render(
+    client_rendered_code = template.render(
         entries=entries,
         to_py_type=to_py_type,
         to_scval=to_scval,
         parse_result_type=parse_result_type,
         parse_result_xdr_fn=parse_result_xdr_fn
     )
-    print(rendered_code)
+    return client_rendered_code
 
+def generate_binding(wasm: bytes) -> str:
+    generated = []
 
-if __name__ == "__main__":
-    wasm_file = "/Users/overcat/repo/lightsail/stellar-contract-bindings/contracts/target/wasm32-unknown-unknown/release/python.wasm"
-    with open(wasm_file, "rb") as f:
-        wasm = f.read()
     metadata = parse_contract_metadata(wasm)
     specs = metadata.spec
 
-    render_imports()
+    generated.append(render_imports())
 
     for spec in specs:
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ENUM_V0:
-            render_enum(spec.udt_enum_v0)
+            generated.append(render_enum(spec.udt_enum_v0))
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ERROR_ENUM_V0:
-            render_error_enum(spec.udt_error_enum_v0)
+            generated.append(render_error_enum(spec.udt_error_enum_v0))
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0:
             if is_tuple_struct(spec.udt_struct_v0):
-                render_tuple_struct(spec.udt_struct_v0)
+                generated.append(render_tuple_struct(spec.udt_struct_v0))
             else:
-                render_struct(spec.udt_struct_v0)
+                generated.append(render_struct(spec.udt_struct_v0))
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
-            render_union(spec.udt_union_v0)
+            generated.append(render_union(spec.udt_union_v0))
 
     function_specs: List[xdr.SCSpecFunctionV0] = [
         spec.function_v0
         for spec in specs
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0
     ]
-    render_client(function_specs)
+    generated.append(render_client(function_specs))
+    return "\n".join(generated)
+
+
+
+if __name__ == "__main__":
+    wasm_file = "/tests/contracts/target/wasm32-unknown-unknown/release/python.wasm"
+    with open(wasm_file, "rb") as f:
+        wasm = f.read()
+    

@@ -4,16 +4,17 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = [
-    "jinja2>=3.1.4",
-    "stellar-sdk",
-]
+dependencies = ["click>=8.1.7", "jinja2>=3.1.4", "stellar-sdk"]
 
 [tool.uv.sources]
 stellar-sdk = { path = "../py-stellar-base" }
 
+[project.scripts]
+stellar-contract-bindings = "stellar_contract_bindings.cli:cli"
+
 [dependency-groups]
-dev = [
-    "black>=24.10.0",
-    "pytest>=8.3.3",
-]
+dev = ["black>=24.10.0", "pytest>=8.3.3"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"

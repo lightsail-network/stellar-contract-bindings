@@ -331,8 +331,9 @@ wheels = [
 [[package]]
 name = "stellar-contract-bindings"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "jinja2" },
     { name = "stellar-sdk" },
 ]
@@ -345,6 +346,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.1.7" },
     { name = "jinja2", specifier = ">=3.1.4" },
     { name = "stellar-sdk", directory = "../py-stellar-base" },
 ]
