@@ -1,20 +1,22 @@
 [project]
 name = "stellar-contract-bindings"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.1.0b0"
+description = "CLI tool designed to generate language bindings for Stellar Soroban smart contracts."
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = ["click>=8.1.7", "jinja2>=3.1.4", "stellar-sdk"]
-
-[tool.uv.sources]
-stellar-sdk = { path = "../py-stellar-base" }
+requires-python = ">=3.9"
+authors = [{ name = "overcat" }]
+license = { text = "Apache-2.0" }
+keywords = ["stellar", "soroban"]
+dependencies = ["click>=8.1.7", "jinja2>=3.1.4", "stellar-sdk>=12.0.0-beta6"]
 
 [project.scripts]
 stellar-contract-bindings = "stellar_contract_bindings.cli:cli"
 
+[project.urls]
+Homepage = "https://github.com/lightsail-network/stellar-contract-bindings"
+Changelog = "https://github.com/lightsail-network/stellar-contract-bindings/releases"
+Issues = "https://github.com/lightsail-network/stellar-contract-bindings/issues"
+CI = "https://github.com/lightsail-network/stellar-contract-bindings/actions"
+
 [dependency-groups]
 dev = ["black>=24.10.0", "pytest>=8.3.3"]
-
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"

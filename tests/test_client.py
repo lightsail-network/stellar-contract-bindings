@@ -102,7 +102,6 @@ class TestClient:
         result = self.client.complex(complex_void)
         assert result.result() == complex_void
 
-
     def test_address(self):
         address = Address("GBXCJUTSISFIAS2UENBBO4NXVBJDL7MQHHWM2MSM6S7N4BNNUAO2CWKF")
         result = self.client.address(address)
