@@ -25,7 +25,7 @@ def camel_to_snake(text: str) -> str:
 def to_py_type(td: xdr.SCSpecTypeDef):
     t = td.type
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VAL:
-        raise NotImplementedError("SC_SPEC_TYPE_VAL is not supported")
+        return "xdr.SCVal"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BOOL:
         return "bool"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:
@@ -82,7 +82,7 @@ def to_py_type(td: xdr.SCSpecTypeDef):
 def to_scval(td: xdr.SCSpecTypeDef, name: str):
     t = td.type
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VAL:
-        raise NotImplementedError("SC_SPEC_TYPE_VAL is not supported")
+        return f"{name}"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BOOL:
         return f"scval.to_bool({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:
@@ -140,7 +140,7 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str):
 def from_scval(td: xdr.SCSpecTypeDef, name: str):
     t = td.type
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VAL:
-        raise NotImplementedError("SC_SPEC_TYPE_VAL is not supported")
+        return f"{name}"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BOOL:
         return f"scval.from_bool({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:

@@ -4,7 +4,7 @@ from stellar_sdk.contract.exceptions import SimulationFailedError
 
 from .client import *
 
-CONTRACT_ID = "CAX7VEMHB4UK6R46HOUBUWCRRJQODLG4MR6K2AUJN7UFGQRQ3YYORGMQ"  # 4a96cdca5eb8e4b1d8226a6a9814bd40d5326802e6ae3baccb63a4c4ac4a5040
+CONTRACT_ID = "CBDDJ3B6S2T63STF6SYB2H6KB4SORYPETGIRTZX3MD5WRXXEVJJHILCG"
 RPC_URL = "https://soroban-testnet.stellar.org"
 NETWORK_PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE
 
@@ -25,6 +25,22 @@ class TestClient:
     def test_void(self):
         result = self.client.void()
         assert result.result() is None
+
+    def test_val(self):
+        result = self.client.val(0, scval.to_void())
+        assert result.result() == scval.to_bool(True)
+
+        result = self.client.val(1, scval.to_void())
+        assert result.result() == scval.to_uint32(123)
+
+        result = self.client.val(2, scval.to_void())
+        assert result.result() == scval.to_int32(-123)
+
+        result = self.client.val(3, scval.to_void())
+        assert result.result() == scval.to_void()
+
+        result = self.client.val(255, scval.to_bytes(b"test"))
+        assert result.result() == scval.to_bytes(b"test")
 
     def test_u32_fail_on_even(self):
         result = self.client.u32_fail_on_even(1)

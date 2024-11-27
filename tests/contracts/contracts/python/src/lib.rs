@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Bytes, BytesN,
-    Duration, Env, Map, String, Symbol, Timepoint, Vec, I256, U256,
+    Duration, Env, Map, String, Symbol, Timepoint, Val, Vec, I256, U256,
 };
 
 #[contract]
@@ -59,6 +59,16 @@ impl Contract {
 
     pub fn void(_env: Env) {
         // do nothing
+    }
+
+    pub fn val(_env: Env, a: u32, b: Val) -> Val {
+        match a {
+            0 => Val::from_bool(true).to_val(),
+            1 => Val::from_u32(123).to_val(),
+            2 => Val::from_i32(-123).to_val(),
+            3 => Val::from_void().to_val(),
+            _ => b,
+        }
     }
 
     pub fn u32_fail_on_even(_env: Env, u32_: u32) -> Result<u32, Error> {
