@@ -549,7 +549,7 @@ def generate_binding(wasm: bytes) -> str:
     function_specs: List[xdr.SCSpecFunctionV0] = [
         spec.function_v0
         for spec in specs
-        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0 and not spec.function_v0.name.sc_symbol.decode().startswith("__")
     ]
     generated.append(render_client(function_specs))
     return "\n".join(generated)
