@@ -835,6 +835,29 @@ class Client(ContractClient):
             restore=restore,
         )
 
+    def empty_tuple(
+        self,
+        source: Union[str, MuxedAccount] = NULL_ACCOUNT,
+        signer: Keypair = None,
+        base_fee: int = 100,
+        transaction_timeout: int = 300,
+        submit_timeout: int = 30,
+        simulate: bool = True,
+        restore: bool = True,
+    ) -> AssembledTransaction[None]:
+        return self.invoke(
+            "empty_tuple",
+            [],
+            parse_result_xdr_fn=lambda v: None,
+            source=source,
+            signer=signer,
+            base_fee=base_fee,
+            transaction_timeout=transaction_timeout,
+            submit_timeout=submit_timeout,
+            simulate=simulate,
+            restore=restore,
+        )
+
     def option(
         self,
         option: Optional[int],
@@ -1629,6 +1652,29 @@ class ClientAsync(ContractClientAsync):
                 scval.from_symbol(scval.from_tuple_struct(v)[0]),
                 scval.from_uint32(scval.from_tuple_struct(v)[1]),
             ),
+            source=source,
+            signer=signer,
+            base_fee=base_fee,
+            transaction_timeout=transaction_timeout,
+            submit_timeout=submit_timeout,
+            simulate=simulate,
+            restore=restore,
+        )
+
+    async def empty_tuple(
+        self,
+        source: Union[str, MuxedAccount] = NULL_ACCOUNT,
+        signer: Keypair = None,
+        base_fee: int = 100,
+        transaction_timeout: int = 300,
+        submit_timeout: int = 30,
+        simulate: bool = True,
+        restore: bool = True,
+    ) -> AssembledTransactionAsync[None]:
+        return await self.invoke(
+            "empty_tuple",
+            [],
+            parse_result_xdr_fn=lambda v: None,
             source=source,
             signer=signer,
             base_fee=base_fee,

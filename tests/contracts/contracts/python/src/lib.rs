@@ -165,6 +165,10 @@ impl Contract {
         tuple
     }
 
+    pub fn empty_tuple(_env: Env) -> () {
+        ()
+    }
+
     /// Example of an optional argument
     pub fn option(_env: Env, option: Option<u32>) -> Option<u32> {
         option

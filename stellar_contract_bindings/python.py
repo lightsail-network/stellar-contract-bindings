@@ -1,10 +1,10 @@
 from typing import List
 from stellar_sdk import __version__ as stellar_sdk_version
-from . import __version__ as stellar_contract_bindings_version
+from stellar_contract_bindings import __version__ as stellar_contract_bindings_version
 from jinja2 import Template
 from stellar_sdk import xdr
 
-from .metadata import parse_contract_metadata
+from stellar_contract_bindings.metadata import parse_contract_metadata
 
 
 def is_tuple_struct(entry: xdr.SCSpecUDTStructV0) -> bool:
@@ -70,6 +70,9 @@ def to_py_type(td: xdr.SCSpecTypeDef):
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
         return f"Dict[{to_py_type(td.map.key_type)}, {to_py_type(td.map.value_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
+        if len(td.tuple.value_types) == 0:
+            # () equivalent to None in Python
+            return "None"
         types = [to_py_type(t) for t in td.tuple.value_types]
         return f"Tuple[{', '.join(types)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
@@ -187,6 +190,8 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str):
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
         return f"{{{from_scval(td.map.key_type, 'k')}: {from_scval(td.map.value_type, 'v')} for k, v in scval.from_map({name}).items()}}"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
+        if len(td.tuple.value_types) == 0:
+            return "None"
         elements = f"scval.from_tuple_struct({name})"
         types = [
             from_scval(t, f"{elements}[{i}]")
@@ -551,6 +556,8 @@ def generate_binding(wasm: bytes) -> str:
 
 
 if __name__ == "__main__":
-    wasm_file = "/tests/contracts/target/wasm32-unknown-unknown/release/python.wasm"
+    wasm_file = "/Users/overcat/repo/lightsail/stellar-contract-bindings/tests/contracts/target/wasm32-unknown-unknown/release/python.wasm"
     with open(wasm_file, "rb") as f:
         wasm = f.read()
+    generated_code = generate_binding(wasm)
+    print(generated_code)

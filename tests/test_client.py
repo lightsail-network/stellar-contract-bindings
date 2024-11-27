@@ -4,7 +4,7 @@ from stellar_sdk.contract.exceptions import SimulationFailedError
 
 from .client import *
 
-CONTRACT_ID = "CBDDJ3B6S2T63STF6SYB2H6KB4SORYPETGIRTZX3MD5WRXXEVJJHILCG"
+CONTRACT_ID = "CCCEM6UHXEVHVXDN4E4G3IIN5LTUJ2NVVSRR3WCQHKP6GROQFGRN3HIE"
 RPC_URL = "https://soroban-testnet.stellar.org"
 NETWORK_PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE
 
@@ -169,6 +169,10 @@ class TestClient:
     def test_tuple(self):
         result = self.client.tuple(("hello", 100))
         assert result.result() == ("hello", 100)
+
+    def test_empty_tuple(self):
+        result = self.client.empty_tuple()
+        assert result.result() is None
 
     def test_option(self):
         result = self.client.option(None)
