@@ -22,5 +22,8 @@ CI = "https://github.com/lightsail-network/stellar-contract-bindings/actions"
 dev = [
     "black>=24.10.0",
     "mypy>=1.13.0",
+    "pytest-asyncio>=0.24.0",
     "pytest>=8.3.3",
+    "aiohttp>=3.11.8",
+    "aiohttp-sse-client>=0.2.1",
 ]
