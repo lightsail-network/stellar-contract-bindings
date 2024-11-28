@@ -50,7 +50,7 @@ jobs:
         run: uv pip install -e .
 
       - name: Generate bindings
-        run: uv run stellar-contract-bindings generate --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF --rpc-url https://mainnet.sorobanrpc.com --language python --output ./bindings
+        run: uv run stellar-contract-bindings python --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF --rpc-url https://mainnet.sorobanrpc.com --output ./bindings
 
   deploy:
     needs: [ test ]

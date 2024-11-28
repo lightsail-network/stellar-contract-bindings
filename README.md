@@ -2,7 +2,9 @@
 
 `stellar-contract-bindings` is a CLI tool designed to generate language bindings for Stellar Soroban smart contracts.
 
-This tool simplifies the process of interacting with Soroban contracts by generating the necessary code to call contract methods directly from your preferred programming language. Currently, it supports Python. [stellar-cli](https://github.com/stellar/stellar-cli) provides support for TypeScript and Rust.
+This tool simplifies the process of interacting with Soroban contracts by generating the necessary code to call contract
+methods directly from your preferred programming language. Currently, it supports
+Python. [stellar-cli](https://github.com/stellar/stellar-cli) provides support for TypeScript and Rust.
 
 ## Installation
 
@@ -14,23 +16,16 @@ pip install stellar-contract-bindings
 
 ## Usage
 
-To generate bindings for a Soroban contract, use the `generate` command with the required options:
+Please check the help message for the most up-to-date usage information:
 
 ```shell
-stellar-contract-bindings generate --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF
+stellar-contract-bindings --help
 ```
-
-### Options
-
-- `--contract-id`: The contract ID to generate bindings for (required).
-- `--rpc-url`: The Soroban RPC URL (default: https://mainnet.sorobanrpc.com).
-- `--language`: The target language for bindings (default: python).
-- `--output`: Output directory for generated bindings (defaults to the current directory).
 
 ### Example
 
 ```shell
-stellar-contract-bindings generate --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF --rpc-url https://mainnet.sorobanrpc.com --language python --output ./bindings
+stellar-contract-bindings python --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF --rpc-url https://mainnet.sorobanrpc.com --output ./bindings
 ```
 
 This command will generate Python binding for the specified contract and save it in the `./bindings` directory.
@@ -43,7 +38,7 @@ After generating the binding, you can use it to interact with your Soroban contr
 
 ```python
 from stellar_sdk import Network
-from bindings import Client # Import the generated bindings
+from bindings import Client  # Import the generated bindings
 
 contract_id = "CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF"
 rpc_url = "https://mainnet.sorobanrpc.com"
@@ -61,4 +56,5 @@ This project is licensed under the Apache-2.0 License. See the [LICENSE](LICENSE
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request for any improvements or bug fixes.
+Contributions are welcome! The project is designed to be easy to add support for other languages, please open an issue
+or submit a pull request for any improvements or bug fixes.
