@@ -849,16 +849,16 @@ wheels = [
 
 [[package]]
 name = "pydantic"
-version = "2.10.1"
+version = "2.10.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
     { name = "pydantic-core" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c4/bd/7fc610993f616d2398958d0028d15eaf53bde5f80cb2edb7aa4f1feaf3a7/pydantic-2.10.1.tar.gz", hash = "sha256:a4daca2dc0aa429555e0656d6bf94873a7dc5f54ee42b1f5873d666fb3f35560", size = 783717 }
+sdist = { url = "https://files.pythonhosted.org/packages/41/86/a03390cb12cf64e2a8df07c267f3eb8d5035e0f9a04bb20fb79403d2a00e/pydantic-2.10.2.tar.gz", hash = "sha256:2bc2d7f17232e0841cbba4641e65ba1eb6fafb3a08de3a091ff3ce14a197c4fa", size = 785401 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e0/fc/fda48d347bd50a788dd2a0f318a52160f911b86fc2d8b4c86f4d7c9bceea/pydantic-2.10.1-py3-none-any.whl", hash = "sha256:a8d20db84de64cf4a7d59e899c2caf0fe9d660c7cfc482528e7020d7dd189a7e", size = 455329 },
+    { url = "https://files.pythonhosted.org/packages/d5/74/da832196702d0c56eb86b75bfa346db9238617e29b0b7ee3b8b4eccfe654/pydantic-2.10.2-py3-none-any.whl", hash = "sha256:cfb96e45951117c3024e6b67b25cdc33a3cb7b2fa62e239f7af1378358a1d99e", size = 456364 },
 ]
 
 [[package]]
@@ -1036,7 +1036,7 @@ wheels = [
 
 [[package]]
 name = "stellar-contract-bindings"
-version = "0.1.0b1"
+version = "0.2.0b0"
 source = { virtual = "." }
 dependencies = [
     { name = "click" },
@@ -1058,7 +1058,7 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.1.7" },
     { name = "jinja2", specifier = ">=3.1.4" },
-    { name = "stellar-sdk", specifier = ">=12.0.0b6" },
+    { name = "stellar-sdk", specifier = ">=12.0.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -1073,7 +1073,7 @@ dev = [
 
 [[package]]
 name = "stellar-sdk"
-version = "12.0.0b6"
+version = "12.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mnemonic" },
@@ -1084,9 +1084,9 @@ dependencies = [
     { name = "toml" },
     { name = "xdrlib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e2/a1/5b4556b826b117e3e7b92e0db7e31997b5411b60d090b0be1d196af27bd0/stellar_sdk-12.0.0b6.tar.gz", hash = "sha256:62c9a2ef8375abcb63d34696de255aad04760f401dc8333bd9a6e8d570581075", size = 306355 }
+sdist = { url = "https://files.pythonhosted.org/packages/16/6d/046eca54bcf912b1164d700656ddda04ebe7653ac1b83eb362adcf6a6e96/stellar_sdk-12.0.0.tar.gz", hash = "sha256:0b14f1936bd386ddf57395b088427555ea64fc6ea9d9ca000128c6d7414a1856", size = 306639 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/2d/f49b5abf3a9f8bb0af8b7658d1e1e711adf73b3fb74225b1838f9d06c198/stellar_sdk-12.0.0b6-py3-none-any.whl", hash = "sha256:9116540d980c48839c0e2ac7e52b6d94c22952a1ea5a578638fd74ecee7d48c7", size = 745377 },
+    { url = "https://files.pythonhosted.org/packages/15/00/289e48952e5f039452602619c4d5dc12320e8df6f3b1ba6d90f4f183e583/stellar_sdk-12.0.0-py3-none-any.whl", hash = "sha256:60814b7a2e2d68c4f1bdc147663fa1b4b30108aa563e49cf483b1a4ea7e887b7", size = 745711 },
 ]
 
 [[package]]
