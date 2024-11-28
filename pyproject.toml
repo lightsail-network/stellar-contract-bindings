@@ -1,13 +1,13 @@
 [project]
 name = "stellar-contract-bindings"
-version = "0.1.0b1"
+version = "0.2.0b0"
 description = "CLI tool designed to generate language bindings for Stellar Soroban smart contracts."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "overcat" }]
 license = { text = "Apache-2.0" }
 keywords = ["stellar", "soroban"]
-dependencies = ["click>=8.1.7", "jinja2>=3.1.4", "stellar-sdk>=12.0.0-beta6"]
+dependencies = ["click>=8.1.7", "jinja2>=3.1.4", "stellar-sdk>=12.0.0"]
 
 [project.scripts]
 stellar-contract-bindings = "stellar_contract_bindings.cli:cli"
