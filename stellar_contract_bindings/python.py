@@ -29,7 +29,7 @@ def camel_to_snake(text: str) -> str:
     return result
 
 
-def to_py_type(td: xdr.SCSpecTypeDef):
+def to_py_type(td: xdr.SCSpecTypeDef, input_type: bool = False):
     t = td.type
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VAL:
         return "xdr.SCVal"
@@ -66,21 +66,21 @@ def to_py_type(td: xdr.SCSpecTypeDef):
     if t == xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL:
         return "str"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
-        return "Address"
+        return "Union[Address, str]" if input_type else "Address"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
-        return f"Optional[{to_py_type(td.option.value_type)}]"
+        return f"Optional[{to_py_type(td.option.value_type, input_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
         ok_t = td.result.ok_type
-        return to_py_type(ok_t)
+        return to_py_type(ok_t, input_type)
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
-        return f"List[{to_py_type(td.vec.element_type)}]"
+        return f"List[{to_py_type(td.vec.element_type, input_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-        return f"Dict[{to_py_type(td.map.key_type)}, {to_py_type(td.map.value_type)}]"
+        return f"Dict[{to_py_type(td.map.key_type, input_type)}, {to_py_type(td.map.value_type, input_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
         if len(td.tuple.value_types) == 0:
             # () equivalent to None in Python
             return "None"
-        types = [to_py_type(t) for t in td.tuple.value_types]
+        types = [to_py_type(t, input_type) for t in td.tuple.value_types]
         return f"Tuple[{', '.join(types)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
         return f"bytes"
@@ -286,7 +286,7 @@ class {{ entry.name.decode() }}:
     {{ field.name.decode() }}: {{ to_py_type(field.type) }}
     {%- endfor %}
 
-    def __init__(self, {% for field in entry.fields %}{{ field.name.decode() }}: {{ to_py_type(field.type) }}{% if not loop.last %}, {% endif %}{% endfor %}):
+    def __init__(self, {% for field in entry.fields %}{{ field.name.decode() }}: {{ to_py_type(field.type, True) }}{% if not loop.last %}, {% endif %}{% endfor %}):
         {%- for field in entry.fields %}
         self.{{ field.name.decode() }} = {{ field.name.decode() }}
         {%- endfor %}
@@ -333,7 +333,7 @@ class {{ entry.name.decode() }}:
     '''{{ entry.doc.decode() }}'''
     {%- endif %}
 
-    def __init__(self, value: Tuple[{% for f in entry.fields %}{{ to_py_type(f.type) }}{% if not loop.last %}, {% endif %}{% endfor %}]):
+    def __init__(self, value: Tuple[{% for f in entry.fields %}{{ to_py_type(f.type, True) }}{% if not loop.last %}, {% endif %}{% endfor %}]):
         self.value = value
 
     def to_scval(self) -> xdr.SCVal:
@@ -384,9 +384,9 @@ class {{ entry.name.decode() }}:
         {%- for case in entry.cases %}
         {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_TUPLE_V0 %}
         {%- if len(case.tuple_case.type) == 1 %}
-        {{ camel_to_snake(case.tuple_case.name.decode()) }}: Optional[{{ to_py_type(case.tuple_case.type[0]) }}] = None,
+        {{ camel_to_snake(case.tuple_case.name.decode()) }}: Optional[{{ to_py_type(case.tuple_case.type[0], True) }}] = None,
         {%- else %}
-        {{ camel_to_snake(case.tuple_case.name.decode()) }}: Optional[Tuple[{% for f in case.tuple_case.type %}{{ to_py_type(f) }}{% if not loop.last %}, {% endif %}{% endfor %}]] = None,
+        {{ camel_to_snake(case.tuple_case.name.decode()) }}: Optional[Tuple[{% for f in case.tuple_case.type %}{{ to_py_type(f, True) }}{% if not loop.last %}, {% endif %}{% endfor %}]] = None,
         {%- endif %}
         {%- endif %}
         {%- endfor %}
@@ -483,7 +483,7 @@ def render_client(entries: List[xdr.SCSpecFunctionV0]):
     template = '''
 class Client(ContractClient):
     {%- for entry in entries %}
-    def {{ entry.name.sc_symbol.decode() }}(self, {% for param in entry.inputs %}{{ param.name.decode() }}: {{ to_py_type(param.type) }}, {% endfor %} source: Union[str, MuxedAccount] = NULL_ACCOUNT, signer: Optional[Keypair] = None, base_fee: int = 100, transaction_timeout: int = 300, submit_timeout: int = 30, simulate: bool = True, restore: bool = True) -> AssembledTransaction[{{ parse_result_type(entry.outputs) }}]:
+    def {{ entry.name.sc_symbol.decode() }}(self, {% for param in entry.inputs %}{{ param.name.decode() }}: {{ to_py_type(param.type, True) }}, {% endfor %} source: Union[str, MuxedAccount] = NULL_ACCOUNT, signer: Optional[Keypair] = None, base_fee: int = 100, transaction_timeout: int = 300, submit_timeout: int = 30, simulate: bool = True, restore: bool = True) -> AssembledTransaction[{{ parse_result_type(entry.outputs) }}]:
         {%- if entry.doc %}
         """{{ entry.doc.decode() }}"""
         {%- endif %}
@@ -492,7 +492,7 @@ class Client(ContractClient):
 
 class ClientAsync(ContractClientAsync):
     {%- for entry in entries %}
-    async def {{ entry.name.sc_symbol.decode() }}(self, {% for param in entry.inputs %}{{ param.name.decode() }}: {{ to_py_type(param.type) }}, {% endfor %} source: Union[str, MuxedAccount] = NULL_ACCOUNT, signer: Optional[Keypair] = None, base_fee: int = 100, transaction_timeout: int = 300, submit_timeout: int = 30, simulate: bool = True, restore: bool = True) -> AssembledTransactionAsync[{{ parse_result_type(entry.outputs) }}]:
+    async def {{ entry.name.sc_symbol.decode() }}(self, {% for param in entry.inputs %}{{ param.name.decode() }}: {{ to_py_type(param.type, True) }}, {% endfor %} source: Union[str, MuxedAccount] = NULL_ACCOUNT, signer: Optional[Keypair] = None, base_fee: int = 100, transaction_timeout: int = 300, submit_timeout: int = 30, simulate: bool = True, restore: bool = True) -> AssembledTransactionAsync[{{ parse_result_type(entry.outputs) }}]:
         {%- if entry.doc %}
         """{{ entry.doc.decode() }}"""
         {%- endif %}
