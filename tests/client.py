@@ -155,7 +155,7 @@ class ComplexEnum:
         struct: Optional[SimpleStruct] = None,
         tuple: Optional[TupleStruct] = None,
         enum: Optional[SimpleEnum] = None,
-        asset: Optional[Tuple[Address, int]] = None,
+        asset: Optional[Tuple[Union[Address, str], int]] = None,
     ):
         self.kind = kind
         self.struct = struct
@@ -539,7 +539,7 @@ class Client(ContractClient):
 
     def address(
         self,
-        address: Address,
+        address: Union[Address, str],
         source: Union[str, MuxedAccount] = NULL_ACCOUNT,
         signer: Optional[Keypair] = None,
         base_fee: int = 100,
@@ -547,7 +547,7 @@ class Client(ContractClient):
         submit_timeout: int = 30,
         simulate: bool = True,
         restore: bool = True,
-    ) -> AssembledTransaction[Address]:
+    ) -> AssembledTransaction[Union[Address, str]]:
         return self.invoke(
             "address",
             [scval.to_address(address)],
@@ -1365,7 +1365,7 @@ class ClientAsync(ContractClientAsync):
 
     async def address(
         self,
-        address: Address,
+        address: Union[Address, str],
         source: Union[str, MuxedAccount] = NULL_ACCOUNT,
         signer: Optional[Keypair] = None,
         base_fee: int = 100,
@@ -1373,7 +1373,7 @@ class ClientAsync(ContractClientAsync):
         submit_timeout: int = 30,
         simulate: bool = True,
         restore: bool = True,
-    ) -> AssembledTransactionAsync[Address]:
+    ) -> AssembledTransactionAsync[Union[Address, str]]:
         return await self.invoke(
             "address",
             [scval.to_address(address)],
