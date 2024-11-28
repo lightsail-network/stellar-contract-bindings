@@ -7,9 +7,9 @@ use soroban_sdk::{
 #[contract]
 pub struct Contract;
 
-/// This is from the rust doc above the struct Test
+/// This is from the rust doc above the struct SimpleStruct
 #[contracttype]
-pub struct Test {
+pub struct SimpleStruct {
     pub a: u32,
     pub b: bool,
     pub c: Symbol,
@@ -33,11 +33,11 @@ pub enum RoyalCard {
 }
 
 #[contracttype]
-pub struct TupleStruct(Test, SimpleEnum);
+pub struct TupleStruct(SimpleStruct, SimpleEnum);
 
 #[contracttype]
 pub enum ComplexEnum {
-    Struct(Test),
+    Struct(SimpleStruct),
     Tuple(TupleStruct),
     Enum(SimpleEnum),
     Asset(Address, i128),
@@ -96,11 +96,11 @@ impl Contract {
     }
 
     /// Example contract method which takes a struct
-    pub fn strukt_hel(env: Env, strukt: Test) -> Vec<Symbol> {
+    pub fn strukt_hel(env: Env, strukt: SimpleStruct) -> Vec<Symbol> {
         vec![&env, symbol_short!("Hello"), strukt.c]
     }
 
-    pub fn strukt(_env: Env, strukt: Test) -> Test {
+    pub fn strukt(_env: Env, strukt: SimpleStruct) -> SimpleStruct {
         strukt
     }
 
@@ -116,8 +116,8 @@ impl Contract {
         address
     }
 
-    pub fn bytes(_env: Env, bytes: Bytes) -> Bytes {
-        bytes
+    pub fn bytes_(_env: Env, bytes_: Bytes) -> Bytes {
+        bytes_
     }
 
     pub fn bytes_n(_env: Env, bytes_n: BytesN<9>) -> BytesN<9> {
@@ -190,7 +190,7 @@ impl Contract {
         tuple_strukt
     }
 
-    pub fn tuple_strukt_nested(_env: Env, tuple_strukt: (Test, SimpleEnum)) -> (Test, SimpleEnum) {
+    pub fn tuple_strukt_nested(_env: Env, tuple_strukt: (SimpleStruct, SimpleEnum)) -> (SimpleStruct, SimpleEnum) {
         tuple_strukt
     }
 

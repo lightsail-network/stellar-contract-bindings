@@ -19,4 +19,8 @@ Issues = "https://github.com/lightsail-network/stellar-contract-bindings/issues"
 CI = "https://github.com/lightsail-network/stellar-contract-bindings/actions"
 
 [dependency-groups]
-dev = ["black>=24.10.0", "pytest>=8.3.3"]
+dev = [
+    "black>=24.10.0",
+    "mypy>=1.13.0",
+    "pytest>=8.3.3",
+]
