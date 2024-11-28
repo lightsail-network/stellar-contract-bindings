@@ -427,7 +427,7 @@ class {{ entry.name.decode() }}:
             assert elements[1] is not None and isinstance(elements[1], xdr.SCVal)
             return cls(kind, {{ camel_to_snake(case.tuple_case.name.decode()) }}={{ from_scval(case.tuple_case.type[0], 'elements[1]') }})
         {%- else %}
-            assert elements[1] is not None and isinstance(elements[1], tuple)
+            assert elements[1] is not None and isinstance(elements[1], list)
             return cls(kind, {{ camel_to_snake(case.tuple_case.name.decode()) }}=(
                 {%- for i, t in enumerate(case.tuple_case.type) %}
                 {{ from_scval(t, 'elements[1][' + loop.index0|string + ']') }}{% if not loop.last %},{% endif %}

@@ -17,8 +17,8 @@ from stellar_sdk.contract import (
 NULL_ACCOUNT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
 
 
-class Test:
-    """This is from the rust doc above the struct Test"""
+class SimpleStruct:
+    """This is from the rust doc above the struct SimpleStruct"""
 
     a: int
     b: bool
@@ -48,7 +48,7 @@ class Test:
         )
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Test):
+        if not isinstance(other, SimpleStruct):
             return NotImplemented
         return self.a == other.a and self.b == other.b and self.c == other.c
 
@@ -114,7 +114,7 @@ class RoyalCard(IntEnum):
 
 class TupleStruct:
 
-    def __init__(self, value: Tuple[Test, SimpleEnum]):
+    def __init__(self, value: Tuple[SimpleStruct, SimpleEnum]):
         self.value = value
 
     def to_scval(self) -> xdr.SCVal:
@@ -126,7 +126,7 @@ class TupleStruct:
     def from_scval(cls, val: xdr.SCVal):
         elements = scval.from_tuple_struct(val)
         values = (
-            Test.from_scval(elements[0]),
+            SimpleStruct.from_scval(elements[0]),
             SimpleEnum.from_scval(elements[1]),
         )
         return cls(values)
@@ -152,7 +152,7 @@ class ComplexEnum:
     def __init__(
         self,
         kind: ComplexEnumKind,
-        struct: Optional[Test] = None,
+        struct: Optional[SimpleStruct] = None,
         tuple: Optional[TupleStruct] = None,
         enum: Optional[SimpleEnum] = None,
         asset: Optional[Tuple[Address, int]] = None,
@@ -188,7 +188,7 @@ class ComplexEnum:
         kind = ComplexEnumKind(elements[0])
         if kind == ComplexEnumKind.Struct:
             assert elements[1] is not None and isinstance(elements[1], xdr.SCVal)
-            return cls(kind, struct=Test.from_scval(elements[1]))
+            return cls(kind, struct=SimpleStruct.from_scval(elements[1]))
         if kind == ComplexEnumKind.Tuple:
             assert elements[1] is not None and isinstance(elements[1], xdr.SCVal)
             return cls(kind, tuple=TupleStruct.from_scval(elements[1]))
@@ -196,7 +196,7 @@ class ComplexEnum:
             assert elements[1] is not None and isinstance(elements[1], xdr.SCVal)
             return cls(kind, enum=SimpleEnum.from_scval(elements[1]))
         if kind == ComplexEnumKind.Asset:
-            assert elements[1] is not None and isinstance(elements[1], tuple)
+            assert elements[1] is not None and isinstance(elements[1], list)
             return cls(
                 kind,
                 asset=(
@@ -440,7 +440,7 @@ class Client(ContractClient):
 
     def strukt_hel(
         self,
-        strukt: Test,
+        strukt: SimpleStruct,
         source: Union[str, MuxedAccount] = NULL_ACCOUNT,
         signer: Optional[Keypair] = None,
         base_fee: int = 100,
@@ -467,7 +467,7 @@ class Client(ContractClient):
 
     def strukt(
         self,
-        strukt: Test,
+        strukt: SimpleStruct,
         source: Union[str, MuxedAccount] = NULL_ACCOUNT,
         signer: Optional[Keypair] = None,
         base_fee: int = 100,
@@ -475,11 +475,11 @@ class Client(ContractClient):
         submit_timeout: int = 30,
         simulate: bool = True,
         restore: bool = True,
-    ) -> AssembledTransaction[Test]:
+    ) -> AssembledTransaction[SimpleStruct]:
         return self.invoke(
             "strukt",
             [strukt.to_scval()],
-            parse_result_xdr_fn=lambda v: Test.from_scval(v),
+            parse_result_xdr_fn=lambda v: SimpleStruct.from_scval(v),
             source=source,
             signer=signer,
             base_fee=base_fee,
@@ -993,7 +993,7 @@ class Client(ContractClient):
 
     def tuple_strukt_nested(
         self,
-        tuple_strukt: Tuple[Test, SimpleEnum],
+        tuple_strukt: Tuple[SimpleStruct, SimpleEnum],
         source: Union[str, MuxedAccount] = NULL_ACCOUNT,
         signer: Optional[Keypair] = None,
         base_fee: int = 100,
@@ -1001,7 +1001,7 @@ class Client(ContractClient):
         submit_timeout: int = 30,
         simulate: bool = True,
         restore: bool = True,
-    ) -> AssembledTransaction[Tuple[Test, SimpleEnum]]:
+    ) -> AssembledTransaction[Tuple[SimpleStruct, SimpleEnum]]:
         return self.invoke(
             "tuple_strukt_nested",
             [
@@ -1010,7 +1010,7 @@ class Client(ContractClient):
                 )
             ],
             parse_result_xdr_fn=lambda v: (
-                Test.from_scval(scval.from_tuple_struct(v)[0]),
+                SimpleStruct.from_scval(scval.from_tuple_struct(v)[0]),
                 SimpleEnum.from_scval(scval.from_tuple_struct(v)[1]),
             ),
             source=source,
@@ -1266,7 +1266,7 @@ class ClientAsync(ContractClientAsync):
 
     async def strukt_hel(
         self,
-        strukt: Test,
+        strukt: SimpleStruct,
         source: Union[str, MuxedAccount] = NULL_ACCOUNT,
         signer: Optional[Keypair] = None,
         base_fee: int = 100,
@@ -1293,7 +1293,7 @@ class ClientAsync(ContractClientAsync):
 
     async def strukt(
         self,
-        strukt: Test,
+        strukt: SimpleStruct,
         source: Union[str, MuxedAccount] = NULL_ACCOUNT,
         signer: Optional[Keypair] = None,
         base_fee: int = 100,
@@ -1301,11 +1301,11 @@ class ClientAsync(ContractClientAsync):
         submit_timeout: int = 30,
         simulate: bool = True,
         restore: bool = True,
-    ) -> AssembledTransactionAsync[Test]:
+    ) -> AssembledTransactionAsync[SimpleStruct]:
         return await self.invoke(
             "strukt",
             [strukt.to_scval()],
-            parse_result_xdr_fn=lambda v: Test.from_scval(v),
+            parse_result_xdr_fn=lambda v: SimpleStruct.from_scval(v),
             source=source,
             signer=signer,
             base_fee=base_fee,
@@ -1819,7 +1819,7 @@ class ClientAsync(ContractClientAsync):
 
     async def tuple_strukt_nested(
         self,
-        tuple_strukt: Tuple[Test, SimpleEnum],
+        tuple_strukt: Tuple[SimpleStruct, SimpleEnum],
         source: Union[str, MuxedAccount] = NULL_ACCOUNT,
         signer: Optional[Keypair] = None,
         base_fee: int = 100,
@@ -1827,7 +1827,7 @@ class ClientAsync(ContractClientAsync):
         submit_timeout: int = 30,
         simulate: bool = True,
         restore: bool = True,
-    ) -> AssembledTransactionAsync[Tuple[Test, SimpleEnum]]:
+    ) -> AssembledTransactionAsync[Tuple[SimpleStruct, SimpleEnum]]:
         return await self.invoke(
             "tuple_strukt_nested",
             [
@@ -1836,7 +1836,7 @@ class ClientAsync(ContractClientAsync):
                 )
             ],
             parse_result_xdr_fn=lambda v: (
-                Test.from_scval(scval.from_tuple_struct(v)[0]),
+                SimpleStruct.from_scval(scval.from_tuple_struct(v)[0]),
                 SimpleEnum.from_scval(scval.from_tuple_struct(v)[1]),
             ),
             source=source,

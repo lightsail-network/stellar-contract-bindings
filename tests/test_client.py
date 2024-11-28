@@ -4,7 +4,7 @@ from stellar_sdk.contract.exceptions import SimulationFailedError
 
 from .client import *
 
-CONTRACT_ID = "CCD5T5M6IQQZ752CFTVEDGY6VKHLJK5HHAO7UA3BRHZC2IFSA5IHOSJ4"
+CONTRACT_ID = "CAYIWC3Y2KK4FXINTF3QFNBOUHGJ673QNG46EX462EYR4EYCFSYVAR4O"
 RPC_URL = "https://soroban-testnet.stellar.org"
 NETWORK_PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE
 
@@ -66,12 +66,12 @@ class TestClient:
         assert result.result() == -34543534
 
     def test_strukt_hel(self):
-        strukt = Test(123, True, "world")
+        strukt = SimpleStruct(123, True, "world")
         result = self.client.strukt_hel(strukt)
         assert result.result() == ["Hello", "world"]
 
     def test_strukt(self):
-        strukt = Test(123, True, "world")
+        strukt = SimpleStruct(123, True, "world")
         result = self.client.strukt(strukt)
         assert result.result() == strukt
 
@@ -82,7 +82,7 @@ class TestClient:
 
     def test_complex_struct(self):
         complex_struct = ComplexEnum(
-            ComplexEnumKind.Struct, struct=Test(123, True, "world")
+            ComplexEnumKind.Struct, struct=SimpleStruct(123, True, "world")
         )
         result = self.client.complex(complex_struct)
         assert result.result() == complex_struct
@@ -91,7 +91,7 @@ class TestClient:
         complex_tuple = ComplexEnum(
             ComplexEnumKind.Tuple,
             tuple=TupleStruct(
-                (Test(123, True, "world"), SimpleEnum(SimpleEnumKind.Third))
+                (SimpleStruct(123, True, "world"), SimpleEnum(SimpleEnumKind.Third))
             ),
         )
         result = self.client.complex(complex_tuple)
@@ -204,12 +204,14 @@ class TestClient:
         assert result.result() == b"hello"
 
     def test_tuple_strukt(self):
-        t = TupleStruct((Test(1, False, "hello"), SimpleEnum(SimpleEnumKind.First)))
+        t = TupleStruct(
+            (SimpleStruct(1, False, "hello"), SimpleEnum(SimpleEnumKind.First))
+        )
         result = self.client.tuple_strukt(t)
         assert result.result() == t
 
     def test_tuple_strukt_nested(self):
-        t = (Test(1, False, "hello"), SimpleEnum(SimpleEnumKind.First))
+        t = (SimpleStruct(1, False, "hello"), SimpleEnum(SimpleEnumKind.First))
         result = self.client.tuple_strukt_nested(t)
         assert result.result() == t
 
