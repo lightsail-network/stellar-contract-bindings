@@ -66,7 +66,7 @@ def to_py_type(td: xdr.SCSpecTypeDef):
     if t == xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL:
         return "str"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
-        return "Address"
+        return "Union[Address, str]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return f"Optional[{to_py_type(td.option.value_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
