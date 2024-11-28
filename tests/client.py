@@ -547,7 +547,7 @@ class Client(ContractClient):
         submit_timeout: int = 30,
         simulate: bool = True,
         restore: bool = True,
-    ) -> AssembledTransaction[Union[Address, str]]:
+    ) -> AssembledTransaction[Address]:
         return self.invoke(
             "address",
             [scval.to_address(address)],
@@ -1373,7 +1373,7 @@ class ClientAsync(ContractClientAsync):
         submit_timeout: int = 30,
         simulate: bool = True,
         restore: bool = True,
-    ) -> AssembledTransactionAsync[Union[Address, str]]:
+    ) -> AssembledTransactionAsync[Address]:
         return await self.invoke(
             "address",
             [scval.to_address(address)],
