@@ -7,12 +7,8 @@ from enum import IntEnum, Enum
 from typing import Dict, List, Tuple, Optional, Union
 
 from stellar_sdk import scval, xdr, Address, MuxedAccount, Keypair
-from stellar_sdk.contract import (
-    AssembledTransaction,
-    AssembledTransactionAsync,
-    ContractClient,
-    ContractClientAsync,
-)
+from stellar_sdk.contract import AssembledTransaction, ContractClient
+from stellar_sdk.contract import AssembledTransactionAsync, ContractClientAsync
 
 NULL_ACCOUNT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
 
