@@ -1,10 +1,17 @@
+import os
 from typing import List
-from stellar_sdk import __version__ as stellar_sdk_version
-from stellar_contract_bindings import __version__ as stellar_contract_bindings_version
+
+import click
 from jinja2 import Template
+from stellar_sdk import __version__ as stellar_sdk_version, StrKey
 from stellar_sdk import xdr
 
+from stellar_contract_bindings import __version__ as stellar_contract_bindings_version
 from stellar_contract_bindings.metadata import parse_contract_metadata
+from stellar_contract_bindings.utils import (
+    get_wasm_hash_by_contract_id,
+    get_contract_wasm_by_hash,
+)
 
 
 def is_tuple_struct(entry: xdr.SCSpecUDTStructV0) -> bool:
@@ -551,6 +558,49 @@ def generate_binding(wasm: bytes) -> str:
     ]
     generated.append(render_client(function_specs))
     return "\n".join(generated)
+
+
+@click.command(name="python")
+@click.option(
+    "--contract-id", required=True, help="The contract ID to generate bindings for"
+)
+@click.option(
+    "--rpc-url", default="https://mainnet.sorobanrpc.com", help="Soroban RPC URL"
+)
+@click.option(
+    "--output",
+    default=None,
+    help="Output directory for generated bindings, defaults to current directory",
+)
+def command(contract_id: str, rpc_url: str, output: str):
+    """Generate Python bindings for a Soroban contract"""
+    if not StrKey.is_valid_contract(contract_id):
+        click.echo(f"Invalid contract ID: {contract_id}", err=True)
+        raise click.Abort()
+
+    # Use current directory if output is not specified
+    if output is None:
+        output = os.getcwd()
+    try:
+        wasm_id = get_wasm_hash_by_contract_id(contract_id, rpc_url)
+        click.echo(f"Got wasm id: {wasm_id.hex()}")
+        wasm_code = get_contract_wasm_by_hash(wasm_id, rpc_url)
+        click.echo(f"Got wasm code")
+    except Exception as e:
+        click.echo(f"Error: {str(e)}", err=True)
+        raise click.Abort()
+
+    click.echo("Generating Python bindings")
+    generated = generate_binding(wasm_code)
+    if not os.path.exists(output):
+        os.makedirs(output)
+    output_path = os.path.join(output, "bindings.py")
+    with open(output_path, "w") as f:
+        f.write(generated)
+    click.echo(f"Generated Python bindings to {output_path}")
+    click.echo(
+        f"We recommend running `black {output_path}` to format the generated code."
+    )
 
 
 if __name__ == "__main__":
