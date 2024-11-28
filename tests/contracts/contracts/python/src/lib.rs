@@ -116,8 +116,8 @@ impl Contract {
         address
     }
 
-    pub fn bytes(_env: Env, bytes: Bytes) -> Bytes {
-        bytes
+    pub fn bytes_(_env: Env, bytes_: Bytes) -> Bytes {
+        bytes_
     }
 
     pub fn bytes_n(_env: Env, bytes_n: BytesN<9>) -> BytesN<9> {

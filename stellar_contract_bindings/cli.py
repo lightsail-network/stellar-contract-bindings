@@ -1,40 +1,13 @@
 import os
 
 import click
-from stellar_sdk import SorobanServer
-from stellar_sdk import xdr, Address, StrKey
+from stellar_sdk import StrKey
 
-from .python import generate_binding
-
-
-def get_contract_wasm_by_hash(wasm_hash: bytes, rpc_url: str) -> bytes:
-    with SorobanServer(rpc_url) as server:
-        key = xdr.LedgerKey(
-            xdr.LedgerEntryType.CONTRACT_CODE,
-            contract_code=xdr.LedgerKeyContractCode(hash=xdr.Hash(wasm_hash)),
-        )
-        resp = server.get_ledger_entries([key])
-        if not resp.entries:
-            raise ValueError(f"Wasm not found, wasm id: {wasm_hash.hex()}")
-        data = xdr.LedgerEntryData.from_xdr(resp.entries[0].xdr)
-        return data.contract_code.code
-
-
-def get_wasm_hash_by_contract_id(contract_id: str, rpc_url: str) -> bytes:
-    with SorobanServer(rpc_url) as server:
-        key = xdr.LedgerKey(
-            xdr.LedgerEntryType.CONTRACT_DATA,
-            contract_data=xdr.LedgerKeyContractData(
-                contract=Address(contract_id).to_xdr_sc_address(),
-                key=xdr.SCVal(xdr.SCValType.SCV_LEDGER_KEY_CONTRACT_INSTANCE),
-                durability=xdr.ContractDataDurability.PERSISTENT,
-            ),
-        )
-        resp = server.get_ledger_entries([key])
-        if not resp.entries:
-            raise ValueError(f"Contract not found, contract id: {contract_id}")
-        data = xdr.LedgerEntryData.from_xdr(resp.entries[0].xdr)
-        return data.contract_data.val.instance.executable.wasm_hash.hash
+from stellar_contract_bindings.python import generate_binding
+from stellar_contract_bindings.utils import (
+    get_wasm_hash_by_contract_id,
+    get_contract_wasm_by_hash,
+)
 
 
 @click.group()

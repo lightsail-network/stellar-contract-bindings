@@ -63,8 +63,8 @@ def to_py_type(td: xdr.SCSpecTypeDef):
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return f"Optional[{to_py_type(td.option.value_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
-        t = td.result.ok_type
-        return to_py_type(t)
+        ok_t = td.result.ok_type
+        return to_py_type(ok_t)
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
         return f"List[{to_py_type(td.vec.element_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
@@ -244,8 +244,7 @@ class {{ entry.name.decode() }}(IntEnum):
         return cls(scval.from_uint32(val))
 """
 
-    template = Template(template)
-    rendered_code = template.render(entry=entry)
+    rendered_code = Template(template).render(entry=entry)
     return rendered_code
 
 
@@ -266,8 +265,7 @@ class {{ entry.name.decode() }}(IntEnum):
         return cls(scval.from_uint32(val))
     """
 
-    template = Template(template)
-    rendered_code = template.render(entry=entry)
+    rendered_code = Template(template).render(entry=entry)
     return rendered_code
 
 
@@ -311,8 +309,7 @@ class {{ entry.name.decode() }}:
         return hash(({% for field in entry.fields %}self.{{ field.name.decode() }}{% if not loop.last %}, {% endif %}{% endfor %}))
 """
 
-    template = Template(template)
-    rendered_code = template.render(
+    rendered_code = Template(template).render(
         entry=entry,
         to_py_type=to_py_type,
         to_scval=to_scval,
@@ -350,8 +347,7 @@ class {{ entry.name.decode() }}:
         return hash(self.value)
 """
 
-    template = Template(template)
-    rendered_code = template.render(
+    rendered_code = Template(template).render(
         entry=entry, to_py_type=to_py_type, to_scval=to_scval, from_scval=from_scval
     )
     return rendered_code
@@ -369,8 +365,7 @@ class {{ entry.name.decode() }}Kind(Enum):
     {%- endfor %}
 """
 
-    kind_enum_template = Template(kind_enum_template)
-    kind_enum_rendered_code = kind_enum_template.render(entry=entry, xdr=xdr)
+    kind_enum_rendered_code = Template(kind_enum_template).render(entry=entry, xdr=xdr)
 
     template = """
 class {{ entry.name.decode() }}:
@@ -404,8 +399,10 @@ class {{ entry.name.decode() }}:
         {%- else %}
         if self.kind == {{ entry.name.decode() }}Kind.{{ case.tuple_case.name.decode() }}:
         {%- if len(case.tuple_case.type) == 1 %}
+            assert self.{{ camel_to_snake(case.tuple_case.name.decode()) }} is not None
             return scval.to_enum(self.kind.name, {{ to_scval(case.tuple_case.type[0], 'self.' ~ camel_to_snake(case.tuple_case.name.decode())) }})
         {%- else %}
+            assert isinstance(self.{{ camel_to_snake(case.tuple_case.name.decode()) }}, tuple)
             return scval.to_enum(self.kind.name, [
                 {%- for t in case.tuple_case.type %}
                 {{ to_scval(t, 'self.' + camel_to_snake(case.tuple_case.name.decode()) + '[' + loop.index0|string + ']') }}{% if not loop.last %},{% endif %}
@@ -427,8 +424,10 @@ class {{ entry.name.decode() }}:
         {%- else %}
         if kind == {{ entry.name.decode() }}Kind.{{ case.tuple_case.name.decode() }}:
         {%- if len(case.tuple_case.type) == 1 %}
+            assert elements[1] is not None and isinstance(elements[1], xdr.SCVal)
             return cls(kind, {{ camel_to_snake(case.tuple_case.name.decode()) }}={{ from_scval(case.tuple_case.type[0], 'elements[1]') }})
         {%- else %}
+            assert elements[1] is not None and isinstance(elements[1], tuple)
             return cls(kind, {{ camel_to_snake(case.tuple_case.name.decode()) }}=(
                 {%- for i, t in enumerate(case.tuple_case.type) %}
                 {{ from_scval(t, 'elements[1][' + loop.index0|string + ']') }}{% if not loop.last %},{% endif %}
@@ -460,8 +459,7 @@ class {{ entry.name.decode() }}:
         {%- endfor %}
         return hash(self.kind)
 """
-    template = Template(template)
-    union_rendered_code = template.render(
+    union_rendered_code = Template(template).render(
         entry=entry,
         to_py_type=to_py_type,
         to_scval=to_scval,
@@ -478,7 +476,7 @@ def render_client(entries: List[xdr.SCSpecFunctionV0]):
     template = '''
 class Client(ContractClient):
     {%- for entry in entries %}
-    def {{ entry.name.sc_symbol.decode() }}(self, {% for param in entry.inputs %}{{ param.name.decode() }}: {{ to_py_type(param.type) }}, {% endfor %} source: Union[str, MuxedAccount] = NULL_ACCOUNT, signer: Keypair = None, base_fee: int = 100, transaction_timeout: int = 300, submit_timeout: int = 30, simulate: bool = True, restore: bool = True) -> AssembledTransaction[{{ parse_result_type(entry.outputs) }}]:
+    def {{ entry.name.sc_symbol.decode() }}(self, {% for param in entry.inputs %}{{ param.name.decode() }}: {{ to_py_type(param.type) }}, {% endfor %} source: Union[str, MuxedAccount] = NULL_ACCOUNT, signer: Optional[Keypair] = None, base_fee: int = 100, transaction_timeout: int = 300, submit_timeout: int = 30, simulate: bool = True, restore: bool = True) -> AssembledTransaction[{{ parse_result_type(entry.outputs) }}]:
         {%- if entry.doc %}
         """{{ entry.doc.decode() }}"""
         {%- endif %}
@@ -487,7 +485,7 @@ class Client(ContractClient):
 
 class ClientAsync(ContractClientAsync):
     {%- for entry in entries %}
-    async def {{ entry.name.sc_symbol.decode() }}(self, {% for param in entry.inputs %}{{ param.name.decode() }}: {{ to_py_type(param.type) }}, {% endfor %} source: Union[str, MuxedAccount] = NULL_ACCOUNT, signer: Keypair = None, base_fee: int = 100, transaction_timeout: int = 300, submit_timeout: int = 30, simulate: bool = True, restore: bool = True) -> AssembledTransactionAsync[{{ parse_result_type(entry.outputs) }}]:
+    async def {{ entry.name.sc_symbol.decode() }}(self, {% for param in entry.inputs %}{{ param.name.decode() }}: {{ to_py_type(param.type) }}, {% endfor %} source: Union[str, MuxedAccount] = NULL_ACCOUNT, signer: Optional[Keypair] = None, base_fee: int = 100, transaction_timeout: int = 300, submit_timeout: int = 30, simulate: bool = True, restore: bool = True) -> AssembledTransactionAsync[{{ parse_result_type(entry.outputs) }}]:
         {%- if entry.doc %}
         """{{ entry.doc.decode() }}"""
         {%- endif %}
@@ -513,8 +511,7 @@ class ClientAsync(ContractClientAsync):
                 "Tuple return type is not supported, please report this issue"
             )
 
-    template = Template(template)
-    client_rendered_code = template.render(
+    client_rendered_code = Template(template).render(
         entries=entries,
         to_py_type=to_py_type,
         to_scval=to_scval,
@@ -549,7 +546,8 @@ def generate_binding(wasm: bytes) -> str:
     function_specs: List[xdr.SCSpecFunctionV0] = [
         spec.function_v0
         for spec in specs
-        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0 and not spec.function_v0.name.sc_symbol.decode().startswith("__")
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0
+        and not spec.function_v0.name.sc_symbol.decode().startswith("__")
     ]
     generated.append(render_client(function_specs))
     return "\n".join(generated)

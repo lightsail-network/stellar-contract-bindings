@@ -31,13 +31,13 @@ def parse_contract_metadata(wasm: Union[bytes, str]) -> ContractMetaData:
     for name, content in custom_sections:
         if name == "contractenvmetav0":
             metadata.env_meta_bytes = content
-            metadata.env_meta = parse_entries(content, xdr.SCEnvMetaEntry)
+            metadata.env_meta = parse_entries(content, xdr.SCEnvMetaEntry)  # type: ignore[assignment]
         if name == "contractspecv0":
             metadata.spec_bytes = content
-            metadata.spec = parse_entries(content, xdr.SCSpecEntry)
+            metadata.spec = parse_entries(content, xdr.SCSpecEntry)  # type: ignore[assignment]
         if name == "contractmetav0":
             metadata.meta_bytes = content
-            metadata.meta = parse_entries(content, xdr.SCMetaEntry)
+            metadata.meta = parse_entries(content, xdr.SCMetaEntry)  # type: ignore[assignment]
     return metadata
 
 

@@ -4,7 +4,7 @@ from stellar_sdk.contract.exceptions import SimulationFailedError
 
 from .client import *
 
-CONTRACT_ID = "CCCEM6UHXEVHVXDN4E4G3IIN5LTUJ2NVVSRR3WCQHKP6GROQFGRN3HIE"
+CONTRACT_ID = "CCD5T5M6IQQZ752CFTVEDGY6VKHLJK5HHAO7UA3BRHZC2IFSA5IHOSJ4"
 RPC_URL = "https://soroban-testnet.stellar.org"
 NETWORK_PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE
 
@@ -126,7 +126,7 @@ class TestClient:
         assert result.result() == address
 
     def test_bytes(self):
-        result = self.client.bytes(b"123")
+        result = self.client.bytes_(b"123")
         assert result.result() == b"123"
 
     def test_bytes_n(self):
