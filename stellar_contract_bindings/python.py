@@ -1,3 +1,4 @@
+import keyword
 import os
 from typing import List
 
@@ -7,11 +8,7 @@ from stellar_sdk import __version__ as stellar_sdk_version, StrKey
 from stellar_sdk import xdr
 
 from stellar_contract_bindings import __version__ as stellar_contract_bindings_version
-from stellar_contract_bindings.metadata import parse_contract_metadata
-from stellar_contract_bindings.utils import (
-    get_wasm_hash_by_contract_id,
-    get_contract_wasm_by_hash,
-)
+from stellar_contract_bindings.utils import get_specs_by_contract_id
 
 
 def is_tuple_struct(entry: xdr.SCSpecUDTStructV0) -> bool:
@@ -300,7 +297,7 @@ class {{ entry.name.decode() }}:
     def to_scval(self) -> xdr.SCVal:
         return scval.to_struct({
             {%- for field in entry.fields %}
-            '{{ field.name.decode() }}': {{ to_scval(field.type, 'self.' ~ field.name.decode()) }}{% if not loop.last %},{% endif %}
+            '{{ field.name_r.decode() if field.name_r else field.name.decode() }}': {{ to_scval(field.type, 'self.' ~ field.name.decode()) }}{% if not loop.last %},{% endif %}
             {%- endfor %}
         })
 
@@ -309,7 +306,7 @@ class {{ entry.name.decode() }}:
         elements = scval.from_struct(val)
         return cls(
             {%- for index, field in enumerate(entry.fields) %}
-            {{ from_scval(field.type, 'elements["' ~ field.name.decode() ~ '"]') }}{% if not loop.last %},{% endif %}
+            {{ from_scval(field.type, 'elements["' ~ (field.name_r.decode() if field.name_r else field.name.decode()) ~ '"]') }}{% if not loop.last %},{% endif %}
             {%- endfor %}
         )
 
@@ -371,9 +368,9 @@ def render_union(entry: xdr.SCSpecUDTUnionV0):
 class {{ entry.name.decode() }}Kind(Enum):
     {%- for case in entry.cases %}
     {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0 %}
-    {{ case.void_case.name.decode() }} = '{{ case.void_case.name.decode() }}'
+    {{ case.void_case.name.decode() }} = '{{ case.void_case.name_r.decode() if case.void_case.name_r else case.void_case.name.decode() }}'
     {%- else %}
-    {{ case.tuple_case.name.decode() }} = '{{ case.tuple_case.name.decode() }}'
+    {{ case.tuple_case.name.decode() }} = '{{ case.tuple_case.name.decode() if case.tuple_case.name_r else case.tuple_case.name.decode() }}'
     {%- endif %}
     {%- endfor %}
 """
@@ -494,7 +491,7 @@ class Client(ContractClient):
         {%- if entry.doc %}
         """{{ entry.doc.decode() }}"""
         {%- endif %}
-        return self.invoke('{{ entry.name.sc_symbol.decode() }}', [{% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}], parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
+        return self.invoke('{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}', [{% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}], parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
     {%- endfor %}
 {%- endif %}
 
@@ -505,7 +502,7 @@ class ClientAsync(ContractClientAsync):
         {%- if entry.doc %}
         """{{ entry.doc.decode() }}"""
         {%- endif %}
-        return await self.invoke('{{ entry.name.sc_symbol.decode() }}', [{% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}], parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
+        return await self.invoke('{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}', [{% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}], parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
     {%- endfor %}
 {%- endif %}
 '''
@@ -539,13 +536,71 @@ class ClientAsync(ContractClientAsync):
     return client_rendered_code
 
 
-def generate_binding(wasm: bytes, client_type: str) -> str:
+# append _ to keyword
+def append_underscore(specs: List[xdr.SCSpecEntry]):
+    for spec in specs:
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0:
+            assert spec.udt_struct_v0 is not None
+            if keyword.iskeyword(spec.udt_struct_v0.name.decode()):
+                spec.udt_struct_v0.name_r = spec.udt_struct_v0.name  # type: ignore[attr-defined]
+                spec.udt_struct_v0.name = spec.udt_struct_v0.name + b"_"
+            for field in spec.udt_struct_v0.fields:
+                if keyword.iskeyword(field.name.decode()):
+                    field.name_r = field.name  # type: ignore[attr-defined]
+                    field.name = field.name + b"_"
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
+            assert spec.udt_union_v0 is not None
+            if keyword.iskeyword(spec.udt_union_v0.name.decode()):
+                spec.udt_union_v0.name_r = spec.udt_union_v0.name  # type: ignore[attr-defined]
+                spec.udt_union_v0.name = spec.udt_union_v0.name + b"_"
+            for union_case in spec.udt_union_v0.cases:
+                if (
+                    union_case.kind
+                    == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_TUPLE_V0
+                ):
+                    if keyword.iskeyword(union_case.tuple_case.name.decode()):
+                        union_case.tuple_case.name_r = union_case.tuple_case.name  # type: ignore[attr-defined]
+                        union_case.tuple_case.name = union_case.tuple_case.name + b"_"
+                elif (
+                    union_case.kind
+                    == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0
+                ):
+                    if keyword.iskeyword(union_case.void_case.name.decode()):
+                        union_case.void_case.name_r = union_case.void_case.name  # type: ignore[attr-defined]
+                        union_case.void_case.name = union_case.void_case.name + b"_"
+                else:
+                    raise ValueError(f"Unsupported union case kind: {union_case.kind}")
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0:
+            assert spec.function_v0 is not None
+            if keyword.iskeyword(spec.function_v0.name.sc_symbol.decode()):
+                spec.function_v0.name.sc_symbol_r = spec.function_v0.name.sc_symbol  # type: ignore[attr-defined]
+                spec.function_v0.name.sc_symbol = spec.function_v0.name.sc_symbol + b"_"
+            for param in spec.function_v0.inputs:
+                if keyword.iskeyword(param.name.decode()):
+                    param.name = param.name + b"_"
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ENUM_V0:
+            assert spec.udt_enum_v0 is not None
+            if keyword.iskeyword(spec.udt_enum_v0.name.decode()):
+                spec.udt_enum_v0.name_r = spec.udt_enum_v0.name  # type: ignore[attr-defined]
+                spec.udt_enum_v0.name = spec.udt_enum_v0.name + b"_"
+            for enum_case in spec.udt_enum_v0.cases:
+                if keyword.iskeyword(enum_case.name.decode()):
+                    enum_case.name = enum_case.name + b"_"
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ERROR_ENUM_V0:
+            assert spec.udt_error_enum_v0 is not None
+            if keyword.iskeyword(spec.udt_error_enum_v0.name.decode()):
+                spec.udt_error_enum_v0.name_r = spec.udt_error_enum_v0.name  # type: ignore[attr-defined]
+                spec.udt_error_enum_v0.name = spec.udt_error_enum_v0.name + b"_"
+            for error_enum_case in spec.udt_error_enum_v0.cases:
+                if keyword.iskeyword(error_enum_case.name.decode()):
+                    error_enum_case.name = error_enum_case.name + b"_"
+
+
+def generate_binding(specs: List[xdr.SCSpecEntry], client_type: str) -> str:
+    append_underscore(specs)
+
     generated = []
     generated.append(render_info())
-
-    metadata = parse_contract_metadata(wasm)
-    specs = metadata.spec
-
     generated.append(render_imports(client_type))
 
     for spec in specs:
@@ -599,16 +654,13 @@ def command(contract_id: str, rpc_url: str, output: str, client_type: str):
     if output is None:
         output = os.getcwd()
     try:
-        wasm_id = get_wasm_hash_by_contract_id(contract_id, rpc_url)
-        click.echo(f"Got wasm id: {wasm_id.hex()}")
-        wasm_code = get_contract_wasm_by_hash(wasm_id, rpc_url)
-        click.echo(f"Got wasm code")
+        specs = get_specs_by_contract_id(contract_id, rpc_url)
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"Get contract specs failed: {e}", err=True)
         raise click.Abort()
 
     click.echo("Generating Python bindings")
-    generated = generate_binding(wasm_code, client_type=client_type)
+    generated = generate_binding(specs, client_type=client_type)
     if not os.path.exists(output):
         os.makedirs(output)
     output_path = os.path.join(output, "bindings.py")
@@ -621,8 +673,12 @@ def command(contract_id: str, rpc_url: str, output: str, client_type: str):
 
 
 if __name__ == "__main__":
+    from stellar_contract_bindings.metadata import parse_contract_metadata
+
     wasm_file = "/Users/overcat/repo/lightsail/stellar-contract-bindings/tests/contracts/target/wasm32-unknown-unknown/release/python.wasm"
     with open(wasm_file, "rb") as f:
         wasm = f.read()
-    generated_code = generate_binding(wasm, "both")
-    print(generated_code)
+
+    specs = parse_contract_metadata(wasm).spec
+    generated = generate_binding(specs, client_type="both")
+    print(generated)

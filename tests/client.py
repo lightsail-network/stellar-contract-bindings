@@ -241,6 +241,97 @@ class Error(IntEnum):
         return cls(scval.from_uint32(val))
 
 
+class True_:
+    """This is from the rust doc above the struct SimpleStruct"""
+
+    def_: int
+
+    def __init__(self, def_: int):
+        self.def_ = def_
+
+    def to_scval(self) -> xdr.SCVal:
+        return scval.to_struct({"def": scval.to_uint32(self.def_)})
+
+    @classmethod
+    def from_scval(cls, val: xdr.SCVal):
+        elements = scval.from_struct(val)
+        return cls(scval.from_uint32(elements["def"]))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, True_):
+            return NotImplemented
+        return self.def_ == other.def_
+
+    def __hash__(self) -> int:
+        return hash((self.def_))
+
+
+class False_(IntEnum):
+    elif_ = 1
+
+    def to_scval(self) -> xdr.SCVal:
+        return scval.to_uint32(self.value)
+
+    @classmethod
+    def from_scval(cls, val: xdr.SCVal):
+        return cls(scval.from_uint32(val))
+
+
+class None_Kind(Enum):
+    elif_ = "elif"
+    nonlocal_ = "nonlocal"
+    not_ = "not"
+
+
+class None_:
+    def __init__(
+        self,
+        kind: None_Kind,
+    ):
+        self.kind = kind
+
+    def to_scval(self) -> xdr.SCVal:
+        if self.kind == None_Kind.elif_:
+            return scval.to_enum(self.kind.name, None)
+        if self.kind == None_Kind.nonlocal_:
+            return scval.to_enum(self.kind.name, None)
+        if self.kind == None_Kind.not_:
+            return scval.to_enum(self.kind.name, None)
+
+    @classmethod
+    def from_scval(cls, val: xdr.SCVal):
+        elements = scval.from_enum(val)
+        kind = None_Kind(elements[0])
+        if kind == None_Kind.elif_:
+            return cls(kind)
+        if kind == None_Kind.nonlocal_:
+            return cls(kind)
+        if kind == None_Kind.not_:
+            return cls(kind)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, None_):
+            return NotImplemented
+        if self.kind != other.kind:
+            return False
+        return True
+
+    def __hash__(self) -> int:
+        return hash(self.kind)
+
+
+class import_(IntEnum):
+    not_ = 11
+    elif_ = 12
+
+    def to_scval(self) -> xdr.SCVal:
+        return scval.to_uint32(self.value)
+
+    @classmethod
+    def from_scval(cls, val: xdr.SCVal):
+        return cls(scval.from_uint32(val))
+
+
 class Client(ContractClient):
     def hello(
         self,
@@ -256,6 +347,30 @@ class Client(ContractClient):
         return self.invoke(
             "hello",
             [scval.to_symbol(hello)],
+            parse_result_xdr_fn=lambda v: scval.from_symbol(v),
+            source=source,
+            signer=signer,
+            base_fee=base_fee,
+            transaction_timeout=transaction_timeout,
+            submit_timeout=submit_timeout,
+            simulate=simulate,
+            restore=restore,
+        )
+
+    def from_(
+        self,
+        finally_: str,
+        source: Union[str, MuxedAccount] = NULL_ACCOUNT,
+        signer: Optional[Keypair] = None,
+        base_fee: int = 100,
+        transaction_timeout: int = 300,
+        submit_timeout: int = 30,
+        simulate: bool = True,
+        restore: bool = True,
+    ) -> AssembledTransaction[str]:
+        return self.invoke(
+            "from",
+            [scval.to_symbol(finally_)],
             parse_result_xdr_fn=lambda v: scval.from_symbol(v),
             source=source,
             signer=signer,
@@ -666,7 +781,7 @@ class Client(ContractClient):
     ) -> AssembledTransaction[bool]:
         """Negates a boolean value"""
         return self.invoke(
-            "not_",
+            "not",
             [scval.to_bool(boolean)],
             parse_result_xdr_fn=lambda v: scval.from_bool(v),
             source=source,
@@ -1092,6 +1207,30 @@ class ClientAsync(ContractClientAsync):
             restore=restore,
         )
 
+    async def from_(
+        self,
+        finally_: str,
+        source: Union[str, MuxedAccount] = NULL_ACCOUNT,
+        signer: Optional[Keypair] = None,
+        base_fee: int = 100,
+        transaction_timeout: int = 300,
+        submit_timeout: int = 30,
+        simulate: bool = True,
+        restore: bool = True,
+    ) -> AssembledTransactionAsync[str]:
+        return await self.invoke(
+            "from",
+            [scval.to_symbol(finally_)],
+            parse_result_xdr_fn=lambda v: scval.from_symbol(v),
+            source=source,
+            signer=signer,
+            base_fee=base_fee,
+            transaction_timeout=transaction_timeout,
+            submit_timeout=submit_timeout,
+            simulate=simulate,
+            restore=restore,
+        )
+
     async def void(
         self,
         source: Union[str, MuxedAccount] = NULL_ACCOUNT,
@@ -1492,7 +1631,7 @@ class ClientAsync(ContractClientAsync):
     ) -> AssembledTransactionAsync[bool]:
         """Negates a boolean value"""
         return await self.invoke(
-            "not_",
+            "not",
             [scval.to_bool(boolean)],
             parse_result_xdr_fn=lambda v: scval.from_bool(v),
             source=source,
