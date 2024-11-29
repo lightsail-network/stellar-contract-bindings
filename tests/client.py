@@ -278,9 +278,9 @@ class False_(IntEnum):
 
 
 class None_Kind(Enum):
-    elif_ = "elif_"
-    nonlocal_ = "nonlocal_"
-    not_ = "not_"
+    elif_ = "elif"
+    nonlocal_ = "nonlocal"
+    not_ = "not"
 
 
 class None_:

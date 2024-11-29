@@ -297,7 +297,7 @@ class {{ entry.name.decode() }}:
     def to_scval(self) -> xdr.SCVal:
         return scval.to_struct({
             {%- for field in entry.fields %}
-            '{{ field.name.decode() }}': {{ to_scval(field.type, 'self.' ~ field.name.decode()) }}{% if not loop.last %},{% endif %}
+            '{{ field.name_r.decode() if field.name_r else field.name.decode() }}': {{ to_scval(field.type, 'self.' ~ field.name.decode()) }}{% if not loop.last %},{% endif %}
             {%- endfor %}
         })
 
@@ -306,7 +306,7 @@ class {{ entry.name.decode() }}:
         elements = scval.from_struct(val)
         return cls(
             {%- for index, field in enumerate(entry.fields) %}
-            {{ from_scval(field.type, 'elements["' ~ field.name.decode() ~ '"]') }}{% if not loop.last %},{% endif %}
+            {{ from_scval(field.type, 'elements["' ~ (field.name_r.decode() if field.name_r else field.name.decode()) ~ '"]') }}{% if not loop.last %},{% endif %}
             {%- endfor %}
         )
 
@@ -368,9 +368,9 @@ def render_union(entry: xdr.SCSpecUDTUnionV0):
 class {{ entry.name.decode() }}Kind(Enum):
     {%- for case in entry.cases %}
     {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0 %}
-    {{ case.void_case.name.decode() }} = '{{ case.void_case.name.decode() }}'
+    {{ case.void_case.name.decode() }} = '{{ case.void_case.name_r.decode() if case.void_case.name_r else case.void_case.name.decode() }}'
     {%- else %}
-    {{ case.tuple_case.name.decode() }} = '{{ case.tuple_case.name.decode() }}'
+    {{ case.tuple_case.name.decode() }} = '{{ case.tuple_case.name.decode() if case.tuple_case.name_r else case.tuple_case.name.decode() }}'
     {%- endif %}
     {%- endfor %}
 """
@@ -542,7 +542,7 @@ def append_underscore(specs: List[xdr.SCSpecEntry]):
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0:
             assert spec.udt_struct_v0 is not None
             if keyword.iskeyword(spec.udt_struct_v0.name.decode()):
-                spec.udt_struct_v0.name_r = spec.udt_struct_v0.name
+                spec.udt_struct_v0.name_r = spec.udt_struct_v0.name  # type: ignore[attr-defined]
                 spec.udt_struct_v0.name = spec.udt_struct_v0.name + b"_"
             for field in spec.udt_struct_v0.fields:
                 if keyword.iskeyword(field.name.decode()):
@@ -550,7 +550,7 @@ def append_underscore(specs: List[xdr.SCSpecEntry]):
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
             assert spec.udt_union_v0 is not None
             if keyword.iskeyword(spec.udt_union_v0.name.decode()):
-                spec.udt_union_v0.name_r = spec.udt_union_v0.name
+                spec.udt_union_v0.name_r = spec.udt_union_v0.name  # type: ignore[attr-defined]
                 spec.udt_union_v0.name = spec.udt_union_v0.name + b"_"
             for union_case in spec.udt_union_v0.cases:
                 if (
@@ -558,19 +558,21 @@ def append_underscore(specs: List[xdr.SCSpecEntry]):
                     == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_TUPLE_V0
                 ):
                     if keyword.iskeyword(union_case.tuple_case.name.decode()):
+                        union_case.tuple_case.name_r = union_case.tuple_case.name  # type: ignore[attr-defined]
                         union_case.tuple_case.name = union_case.tuple_case.name + b"_"
                 elif (
                     union_case.kind
                     == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0
                 ):
                     if keyword.iskeyword(union_case.void_case.name.decode()):
+                        union_case.void_case.name_r = union_case.void_case.name  # type: ignore[attr-defined]
                         union_case.void_case.name = union_case.void_case.name + b"_"
                 else:
                     raise ValueError(f"Unsupported union case kind: {union_case.kind}")
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0:
             assert spec.function_v0 is not None
             if keyword.iskeyword(spec.function_v0.name.sc_symbol.decode()):
-                spec.function_v0.name.sc_symbol_r = spec.function_v0.name.sc_symbol
+                spec.function_v0.name.sc_symbol_r = spec.function_v0.name.sc_symbol  # type: ignore[attr-defined]
                 spec.function_v0.name.sc_symbol = spec.function_v0.name.sc_symbol + b"_"
             for param in spec.function_v0.inputs:
                 if keyword.iskeyword(param.name.decode()):
@@ -578,7 +580,7 @@ def append_underscore(specs: List[xdr.SCSpecEntry]):
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ENUM_V0:
             assert spec.udt_enum_v0 is not None
             if keyword.iskeyword(spec.udt_enum_v0.name.decode()):
-                spec.udt_enum_v0.name_r = spec.udt_enum_v0.name
+                spec.udt_enum_v0.name_r = spec.udt_enum_v0.name  # type: ignore[attr-defined]
                 spec.udt_enum_v0.name = spec.udt_enum_v0.name + b"_"
             for enum_case in spec.udt_enum_v0.cases:
                 if keyword.iskeyword(enum_case.name.decode()):
@@ -586,7 +588,7 @@ def append_underscore(specs: List[xdr.SCSpecEntry]):
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ERROR_ENUM_V0:
             assert spec.udt_error_enum_v0 is not None
             if keyword.iskeyword(spec.udt_error_enum_v0.name.decode()):
-                spec.udt_error_enum_v0.name_r = spec.udt_error_enum_v0.name
+                spec.udt_error_enum_v0.name_r = spec.udt_error_enum_v0.name  # type: ignore[attr-defined]
                 spec.udt_error_enum_v0.name = spec.udt_error_enum_v0.name + b"_"
             for error_enum_case in spec.udt_error_enum_v0.cases:
                 if keyword.iskeyword(error_enum_case.name.decode()):
