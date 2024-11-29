@@ -51,10 +51,48 @@ pub enum Error {
     /// Please provide an odd number
     NumberMustBeOdd = 1,
 }
+
+// Test Python keywords
+
+/// This is from the rust doc above the struct SimpleStruct
+#[contracttype]
+pub struct True {
+    pub def: u32,
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum False {
+    /// Please provide an odd number
+    elif = 1,
+}
+
+#[contracttype]
+pub enum None {
+    elif,
+    nonlocal,
+    not,
+}
+
+#[contracttype]
+#[derive(Clone, Copy)]
+// The `repr` attribute is here to specify the memory alignment for this type
+#[repr(u32)]
+pub enum import {
+    not = 11,
+    elif = 12,
+}
+
 #[contractimpl]
 impl Contract {
     pub fn hello(_env: Env, hello: Symbol) -> Symbol {
         hello
+    }
+
+    pub fn from(_env: Env, finally: Symbol) -> Symbol {
+        // test python key words
+        finally
     }
 
     pub fn void(_env: Env) {
@@ -133,7 +171,7 @@ impl Contract {
     }
 
     /// Negates a boolean value
-    pub fn not_(_env: Env, boolean: bool) -> bool {
+    pub fn not(_env: Env, boolean: bool) -> bool {
         !boolean
     }
 
@@ -190,7 +228,10 @@ impl Contract {
         tuple_strukt
     }
 
-    pub fn tuple_strukt_nested(_env: Env, tuple_strukt: (SimpleStruct, SimpleEnum)) -> (SimpleStruct, SimpleEnum) {
+    pub fn tuple_strukt_nested(
+        _env: Env,
+        tuple_strukt: (SimpleStruct, SimpleEnum),
+    ) -> (SimpleStruct, SimpleEnum) {
         tuple_strukt
     }
 
