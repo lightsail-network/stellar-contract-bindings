@@ -7,7 +7,12 @@ requires-python = ">=3.9"
 authors = [{ name = "overcat" }]
 license = { text = "Apache-2.0" }
 keywords = ["stellar", "soroban"]
-dependencies = ["click>=8.1.7", "jinja2>=3.1.4", "stellar-sdk>=12.0.0"]
+dependencies = [
+    "black>=24.10.0",
+    "click>=8.1.7",
+    "jinja2>=3.1.4",
+    "stellar-sdk>=12.0.0",
+]
 
 [project.scripts]
 stellar-contract-bindings = "stellar_contract_bindings.cli:cli"
@@ -20,10 +25,12 @@ CI = "https://github.com/lightsail-network/stellar-contract-bindings/actions"
 
 [dependency-groups]
 dev = [
-    "black>=24.10.0",
     "mypy>=1.13.0",
     "pytest-asyncio>=0.24.0",
     "pytest>=8.3.3",
     "aiohttp>=3.11.8",
     "aiohttp-sse-client>=0.2.1",
 ]
+
+[tool.uv]
+package = true

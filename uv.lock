@@ -1037,8 +1037,9 @@ wheels = [
 [[package]]
 name = "stellar-contract-bindings"
 version = "0.2.0b0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
+    { name = "black" },
     { name = "click" },
     { name = "jinja2" },
     { name = "stellar-sdk" },
@@ -1048,7 +1049,6 @@ dependencies = [
 dev = [
     { name = "aiohttp" },
     { name = "aiohttp-sse-client" },
-    { name = "black" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1056,6 +1056,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "black", specifier = ">=24.10.0" },
     { name = "click", specifier = ">=8.1.7" },
     { name = "jinja2", specifier = ">=3.1.4" },
     { name = "stellar-sdk", specifier = ">=12.0.0" },
@@ -1065,7 +1066,6 @@ requires-dist = [
 dev = [
     { name = "aiohttp", specifier = ">=3.11.8" },
     { name = "aiohttp-sse-client", specifier = ">=0.2.1" },
-    { name = "black", specifier = ">=24.10.0" },
     { name = "mypy", specifier = ">=1.13.0" },
     { name = "pytest", specifier = ">=8.3.3" },
     { name = "pytest-asyncio", specifier = ">=0.24.0" },
