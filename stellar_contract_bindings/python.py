@@ -491,7 +491,7 @@ class Client(ContractClient):
         {%- if entry.doc %}
         """{{ entry.doc.decode() }}"""
         {%- endif %}
-        return self.invoke('{{ entry.name.sc_symbol.decode() }}', [{% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}], parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
+        return self.invoke('{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}', [{% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}], parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
     {%- endfor %}
 {%- endif %}
 
@@ -502,7 +502,7 @@ class ClientAsync(ContractClientAsync):
         {%- if entry.doc %}
         """{{ entry.doc.decode() }}"""
         {%- endif %}
-        return await self.invoke('{{ entry.name.sc_symbol.decode() }}', [{% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}], parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
+        return await self.invoke('{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}', [{% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}], parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
     {%- endfor %}
 {%- endif %}
 '''
@@ -542,6 +542,7 @@ def append_underscore(specs: List[xdr.SCSpecEntry]):
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0:
             assert spec.udt_struct_v0 is not None
             if keyword.iskeyword(spec.udt_struct_v0.name.decode()):
+                spec.udt_struct_v0.name_r = spec.udt_struct_v0.name
                 spec.udt_struct_v0.name = spec.udt_struct_v0.name + b"_"
             for field in spec.udt_struct_v0.fields:
                 if keyword.iskeyword(field.name.decode()):
@@ -549,6 +550,7 @@ def append_underscore(specs: List[xdr.SCSpecEntry]):
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
             assert spec.udt_union_v0 is not None
             if keyword.iskeyword(spec.udt_union_v0.name.decode()):
+                spec.udt_union_v0.name_r = spec.udt_union_v0.name
                 spec.udt_union_v0.name = spec.udt_union_v0.name + b"_"
             for union_case in spec.udt_union_v0.cases:
                 if (
@@ -568,6 +570,7 @@ def append_underscore(specs: List[xdr.SCSpecEntry]):
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0:
             assert spec.function_v0 is not None
             if keyword.iskeyword(spec.function_v0.name.sc_symbol.decode()):
+                spec.function_v0.name.sc_symbol_r = spec.function_v0.name.sc_symbol
                 spec.function_v0.name.sc_symbol = spec.function_v0.name.sc_symbol + b"_"
             for param in spec.function_v0.inputs:
                 if keyword.iskeyword(param.name.decode()):
@@ -575,6 +578,7 @@ def append_underscore(specs: List[xdr.SCSpecEntry]):
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ENUM_V0:
             assert spec.udt_enum_v0 is not None
             if keyword.iskeyword(spec.udt_enum_v0.name.decode()):
+                spec.udt_enum_v0.name_r = spec.udt_enum_v0.name
                 spec.udt_enum_v0.name = spec.udt_enum_v0.name + b"_"
             for enum_case in spec.udt_enum_v0.cases:
                 if keyword.iskeyword(enum_case.name.decode()):
@@ -582,6 +586,7 @@ def append_underscore(specs: List[xdr.SCSpecEntry]):
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ERROR_ENUM_V0:
             assert spec.udt_error_enum_v0 is not None
             if keyword.iskeyword(spec.udt_error_enum_v0.name.decode()):
+                spec.udt_error_enum_v0.name_r = spec.udt_error_enum_v0.name
                 spec.udt_error_enum_v0.name = spec.udt_error_enum_v0.name + b"_"
             for error_enum_case in spec.udt_error_enum_v0.cases:
                 if keyword.iskeyword(error_enum_case.name.decode()):

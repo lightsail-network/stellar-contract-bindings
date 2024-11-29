@@ -369,7 +369,7 @@ class Client(ContractClient):
         restore: bool = True,
     ) -> AssembledTransaction[str]:
         return self.invoke(
-            "from_",
+            "from",
             [scval.to_symbol(finally_)],
             parse_result_xdr_fn=lambda v: scval.from_symbol(v),
             source=source,
@@ -781,7 +781,7 @@ class Client(ContractClient):
     ) -> AssembledTransaction[bool]:
         """Negates a boolean value"""
         return self.invoke(
-            "not_",
+            "not",
             [scval.to_bool(boolean)],
             parse_result_xdr_fn=lambda v: scval.from_bool(v),
             source=source,
@@ -1219,7 +1219,7 @@ class ClientAsync(ContractClientAsync):
         restore: bool = True,
     ) -> AssembledTransactionAsync[str]:
         return await self.invoke(
-            "from_",
+            "from",
             [scval.to_symbol(finally_)],
             parse_result_xdr_fn=lambda v: scval.from_symbol(v),
             source=source,
@@ -1631,7 +1631,7 @@ class ClientAsync(ContractClientAsync):
     ) -> AssembledTransactionAsync[bool]:
         """Negates a boolean value"""
         return await self.invoke(
-            "not_",
+            "not",
             [scval.to_bool(boolean)],
             parse_result_xdr_fn=lambda v: scval.from_bool(v),
             source=source,
