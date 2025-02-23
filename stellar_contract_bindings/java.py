@@ -1,4 +1,3 @@
-import keyword
 import os
 from typing import List
 import black
@@ -39,29 +38,32 @@ def camel_to_snake(text: str) -> str:
         return f"{v}_"
     return v
 
+
 def get_tuple_class_name(amount: int) -> str:
     if amount < 1 or amount > 10:
         raise ValueError("amount should be between 1 and 10")
-    return ["Unit", "Pair", "Triplet", "Quartet", "Quintet", "Sextet", "Septet", "Octet", "Ennead", "Decade"][amount - 1]
+    return ["Unit", "Pair", "Triplet", "Quartet", "Quintet", "Sextet", "Septet", "Octet", "Ennead", "Decade"][
+        amount - 1]
+
 
 def to_java_type(td: xdr.SCSpecTypeDef, input_type: bool = False):
     t = td.type
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VAL:
         return "SCVal"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BOOL:
-        return "boolean"
+        return "Boolean"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:
         return "Void"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ERROR:
         raise NotImplementedError("SC_SPEC_TYPE_ERROR is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_U32:
-        return "long"
+        return "Long"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_I32:
-        return "int"
+        return "Integer"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_U64:
         return "BigInteger"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_I64:
-        return "long"
+        return "Long"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TIMEPOINT:
         return "BigInteger"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_DURATION:
@@ -88,9 +90,9 @@ def to_java_type(td: xdr.SCSpecTypeDef, input_type: bool = False):
         ok_t = td.result.ok_type
         return to_java_type(ok_t, input_type)
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
-        return f"List[{to_java_type(td.vec.element_type, input_type)}]"
+        return f"List<{to_java_type(td.vec.element_type, input_type)}>"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-        return f"Map[{to_java_type(td.map.key_type, input_type)}, {to_java_type(td.map.value_type, input_type)}]"
+        return f"LinkedHashMap<{to_java_type(td.map.key_type, input_type)}, {to_java_type(td.map.value_type, input_type)}>"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
         if len(td.tuple.value_types) == 0:
             # () equivalent to None in Java
@@ -149,15 +151,14 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str):
         return NotImplementedError("SC_SPEC_TYPE_RESULT is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
         # return f"Scv.toVec([{to_scval(td.vec.element_type, 'e')} for e in {name}])"
-        return f"Scv.toVec({name}.stream().map(e -> {to_scval(td.vec.element_type, 'e')}).collect(Collectors.toList())"
+        return f"Scv.toVec({name}.stream().map(e -> {to_scval(td.vec.element_type, 'e')}).collect(Collectors.toList()))"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-        # return f"Scv.toMap({{{to_scval(td.map.key_type, 'k')}: {to_scval(td.map.value_type, 'v')} for k, v in {name}.items()}})"
-        return f"Scv.toMap({name}.entrySet().stream().collect(Collectors.toMap(e -> {to_scval(td.map.key_type, 'e.getKey()')}, e -> {to_scval(td.map.value_type, 'e.getValue()')}))"
+        return f"Scv.toMap({name}.entrySet().stream().collect(LinkedHashMap::new, (m, e) -> m.put({to_scval(td.map.key_type, 'e.getKey()')}, {to_scval(td.map.value_type, 'e.getValue()')}), LinkedHashMap::putAll))"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
         # types = [
         #     to_scval(t, f"{name}[{i}]") for i, t in enumerate(td.tuple.value_types)
         # ]
-        return f"Scv.toVec(Arrays.asList({', '.join([to_scval(t, f'{name}.value{i}') for i, t in enumerate(td.tuple.value_types)])}))"
+        return f"Scv.toVec(Arrays.asList({', '.join([to_scval(t, f'{name}.getValue{i}()') for i, t in enumerate(td.tuple.value_types)])}))"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
         return f"Scv.toBytes({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
@@ -205,7 +206,7 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str):
         return f"Scv.fromAddress({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         # return f"{from_scval(td.option.value_type, name)} if {name}.type != xdr.SCValType.SCV_VOID else Scv.fromVoid({name})"
-        return f"{name}.getDiscriminant() != SCValType.SCV_VOID ? {from_scval(td.option.value_type, name)} : Scv.fromVoid({name})"
+        return f"{name}.getDiscriminant() != SCValType.SCV_VOID ? {from_scval(td.option.value_type, name)} : null"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
         ok_t = td.result.ok_type
         return f"{from_scval(ok_t, name)}"
@@ -213,19 +214,14 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str):
         # return f"[{from_scval(td.vec.element_type, 'e')} for e in Scv.fromVec({name})]"
         return f"Scv.fromVec({name}).stream().map(e -> {from_scval(td.vec.element_type, 'e')}).collect(Collectors.toList())"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
+        return f"Scv.fromMap({name}).entrySet().stream().collect(LinkedHashMap::new, (m, e) -> m.put({from_scval(td.map.key_type, 'e.getKey()')}, {from_scval(td.map.value_type, 'e.getValue()')}), LinkedHashMap::putAll)"
         # return f"{{{from_scval(td.map.key_type, 'k')}: {from_scval(td.map.value_type, 'v')} for k, v in Scv.fromMap({name}).items()}}"
-        return f"Scv.fromMap({name}).entrySet().stream().collect(Collectors.toMap(e -> {from_scval(td.map.key_type, 'e.getKey()')}, e -> {from_scval(td.map.value_type, 'e.getValue()')})"
+        # return f"Scv.fromMap({name}).entrySet().stream().collect(Collectors.toMap(e -> {from_scval(td.map.key_type, 'e.getKey()')}, e -> {from_scval(td.map.value_type, 'e.getValue()')})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
         if len(td.tuple.value_types) == 0:
-            return "Void"
-        return ""
-        # return
-        # elements = f"scval.from_tuple_struct({name})"
-        # types = [
-        #     from_scval(t, f"{elements}[{i}]")
-        #     for i, t in enumerate(td.tuple.value_types)
-        # ]
-        # return f"({', '.join(types)})"
+            return "null"
+        return f"new {get_tuple_class_name(len(td.tuple.value_types))}<>({', '.join([from_scval(t, f'Scv.fromVec({name}).toArray(new SCVal[0])[{index}]') for index, t in enumerate(td.tuple.value_types)])})"
+
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
         return f"Scv.fromBytes({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
@@ -235,22 +231,39 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str):
 
 def render_info():
     return (
-        f"# This file was generated by stellar_contract_bindings v{stellar_contract_bindings_version} and stellar_sdk v{stellar_sdk_version}."
+        f"// This file was generated by stellar_contract_bindings v{stellar_contract_bindings_version} and stellar_sdk v{stellar_sdk_version}."
     )
 
 
 def render_imports(client_type: str = "both"):
     template = """
+// https://mvnrepository.com/artifact/org.projectlombok/lombok
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Value;
+
+// https://mvnrepository.com/artifact/org.javatuples/javatuples
+import org.javatuples.Unit;
+import org.javatuples.Pair;
+import org.javatuples.Triplet;
+import org.javatuples.Quartet;
+import org.javatuples.Quintet;
+import org.javatuples.Sextet;
+import org.javatuples.Septet;
+import org.javatuples.Octet;
+import org.javatuples.Ennead;
+import org.javatuples.Decade;
+
+import org.stellar.sdk.contract.AssembledTransaction;
 import org.stellar.sdk.contract.ContractClient;
 import org.stellar.sdk.scval.Scv;
 import org.stellar.sdk.xdr.SCVal;
+import org.stellar.sdk.xdr.SCValType;
 
 import java.math.BigInteger;
 import java.util.*;
+import java.util.stream.Collectors;
 """
     # NULL_ACCOUNT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
 
@@ -513,10 +526,8 @@ public static class {{ entry.name.decode() }} {
     return union_rendered_code
 
 
-def render_client(entries: List[xdr.SCSpecFunctionV0], client_type: str):
+def render_functions(entries: List[xdr.SCSpecFunctionV0], client_type: str):
     template = '''
-public class Client extends ContractClient {
-
     /**
      * Creates a new {@link Client} with the given contract ID, RPC URL, and network.
      *
@@ -528,28 +539,28 @@ public class Client extends ContractClient {
         super(contractId, rpcUrl, network);
     }
     
+    
     {%- for entry in entries %}
-    public AssembledTransaction<?> {{ entry.name.sc_symbol.decode() }}({% for param in entry.inputs %}{{ to_java_type(param.type, True) }} {{ param.name.decode() }}, {% endfor %} String source, @Nullable KeyPair signer, int baseFee, int transactionTimeout, int submitTimeout, boolean simulate, boolean restore) {
-        return invoke('{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}', Arrays.of({% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}]), parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
+    public AssembledTransaction<{{ parse_result_type(entry.outputs) }}> {{ entry.name.sc_symbol.decode() }}({% for param in entry.inputs %}{{ to_java_type(param.type, True) }} {{ param.name.decode() }}, {% endfor %} String source, KeyPair signer, int baseFee, int transactionTimeout, int submitTimeout, boolean simulate, boolean restore) {
+        return invoke("{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}", Arrays.asList({% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}), source, signer, {{ parse_result_xdr_fn(entry.outputs) }}, baseFee, transactionTimeout, submitTimeout, simulate, restore);
     }
     {%- endfor %} 
 
-}
 '''
 
     def parse_result_type(output: List[xdr.SCSpecTypeDef]):
         if len(output) == 0:
-            return "None"
+            return "Void"
         elif len(output) == 1:
             return to_java_type(output[0])
         else:
-            return f"Tuple[{', '.join([to_java_type(t) for t in output])}]"
+            return f"{get_tuple_class_name}<{', '.join([to_java_type(t) for t in output])}>"
 
     def parse_result_xdr_fn(output: List[xdr.SCSpecTypeDef]):
         if len(output) == 0:
-            return "lambda _: None"
+            return "v -> null"
         elif len(output) == 1:
-            return f'lambda v: {from_scval(output[0], "v")}'
+            return f'v -> {from_scval(output[0], "v")}'
         else:
             raise NotImplementedError(
                 "Tuple return type is not supported, please report this issue"
@@ -631,7 +642,9 @@ def generate_binding(specs: List[xdr.SCSpecEntry], package: str) -> str:
 
     generated = []
     generated.append(render_info())
+    generated.append(f"package {package};")
     generated.append(render_imports(package))
+    generated.append("public class Client extends ContractClient {")
     for spec in specs:
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ENUM_V0:
             generated.append(render_enum(spec.udt_enum_v0))
@@ -651,7 +664,8 @@ def generate_binding(specs: List[xdr.SCSpecEntry], package: str) -> str:
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0
            and not spec.function_v0.name.sc_symbol.decode().startswith("__")
     ]
-    generated.append(render_client(function_specs, package))
+    generated.append(render_functions(function_specs, package))
+    generated.append("}")
     return "\n".join(generated)
 
 
@@ -699,7 +713,7 @@ def command(contract_id: str, rpc_url: str, output: str, package: str):
 
     if not os.path.exists(output):
         os.makedirs(output)
-    output_path = os.path.join(output, "Binding.java")
+    output_path = os.path.join(output, "Client.java")
     with open(output_path, "w") as f:
         f.write(generated)
     click.echo(f"Generated Java bindings to {output_path}")
