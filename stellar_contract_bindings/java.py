@@ -39,8 +39,12 @@ def camel_to_snake(text: str) -> str:
         return f"{v}_"
     return v
 
+def get_tuple_class_name(amount: int) -> str:
+    if amount < 1 or amount > 10:
+        raise ValueError("amount should be between 1 and 10")
+    return ["Unit", "Pair", "Triplet", "Quartet", "Quintet", "Sextet", "Septet", "Octet", "Ennead", "Decade"][amount - 1]
 
-def to_py_type(td: xdr.SCSpecTypeDef, input_type: bool = False):
+def to_java_type(td: xdr.SCSpecTypeDef, input_type: bool = False):
     t = td.type
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VAL:
         return "SCVal"
@@ -79,20 +83,20 @@ def to_py_type(td: xdr.SCSpecTypeDef, input_type: bool = False):
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
         return "Address"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
-        return f"Optional[{to_py_type(td.option.value_type, input_type)}]"
+        return to_java_type(td.option.value_type, input_type)
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
         ok_t = td.result.ok_type
-        return to_py_type(ok_t, input_type)
+        return to_java_type(ok_t, input_type)
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
-        return f"List[{to_py_type(td.vec.element_type, input_type)}]"
+        return f"List[{to_java_type(td.vec.element_type, input_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-        return f"Map[{to_py_type(td.map.key_type, input_type)}, {to_py_type(td.map.value_type, input_type)}]"
+        return f"Map[{to_java_type(td.map.key_type, input_type)}, {to_java_type(td.map.value_type, input_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
         if len(td.tuple.value_types) == 0:
-            # () equivalent to None in Python
-            return "None"
-        types = [to_py_type(t, input_type) for t in td.tuple.value_types]
-        return f"Tuple[{', '.join(types)}]"
+            # () equivalent to None in Java
+            return "Void"
+        types = [to_java_type(t, input_type) for t in td.tuple.value_types]
+        return f"{get_tuple_class_name(len(types))}<{', '.join(types)}>"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
         return f"byte[]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
@@ -139,18 +143,21 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str):
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
         return f"Scv.toAddress({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
-        return f"{to_scval(td.option.value_type, name)} if {name} is not None else scval.to_void()"
+        # return f"{to_scval(td.option.value_type, name)} if {name} != null else scval.to_void()"
+        return f"{name} == null ? Scv.toVoid() : {to_scval(td.option.value_type, name)}"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
         return NotImplementedError("SC_SPEC_TYPE_RESULT is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
-        return f"Scv.toVec([{to_scval(td.vec.element_type, 'e')} for e in {name}])"
+        # return f"Scv.toVec([{to_scval(td.vec.element_type, 'e')} for e in {name}])"
+        return f"Scv.toVec({name}.stream().map(e -> {to_scval(td.vec.element_type, 'e')}).collect(Collectors.toList())"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-        return f"Scv.toMap({{{to_scval(td.map.key_type, 'k')}: {to_scval(td.map.value_type, 'v')} for k, v in {name}.items()}})"
+        # return f"Scv.toMap({{{to_scval(td.map.key_type, 'k')}: {to_scval(td.map.value_type, 'v')} for k, v in {name}.items()}})"
+        return f"Scv.toMap({name}.entrySet().stream().collect(Collectors.toMap(e -> {to_scval(td.map.key_type, 'e.getKey()')}, e -> {to_scval(td.map.value_type, 'e.getValue()')}))"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
-        types = [
-            to_scval(t, f"{name}[{i}]") for i, t in enumerate(td.tuple.value_types)
-        ]
-        return f"scval.to_tuple_struct([{', '.join(types)}])"
+        # types = [
+        #     to_scval(t, f"{name}[{i}]") for i, t in enumerate(td.tuple.value_types)
+        # ]
+        return f"Scv.toVec(Arrays.asList({', '.join([to_scval(t, f'{name}.value{i}') for i, t in enumerate(td.tuple.value_types)])}))"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
         return f"Scv.toBytes({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
@@ -197,25 +204,28 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str):
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
         return f"Scv.fromAddress({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
-        return f"{from_scval(td.option.value_type, name)} if {name}.type != xdr.SCValType.SCV_VOID else scval.from_void({name})"
+        # return f"{from_scval(td.option.value_type, name)} if {name}.type != xdr.SCValType.SCV_VOID else Scv.fromVoid({name})"
+        return f"{name}.getDiscriminant() != SCValType.SCV_VOID ? {from_scval(td.option.value_type, name)} : Scv.fromVoid({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
         ok_t = td.result.ok_type
         return f"{from_scval(ok_t, name)}"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
-        return (
-            f"[{from_scval(td.vec.element_type, 'e')} for e in Scv.fromVec({name})]"
-        )
+        # return f"[{from_scval(td.vec.element_type, 'e')} for e in Scv.fromVec({name})]"
+        return f"Scv.fromVec({name}).stream().map(e -> {from_scval(td.vec.element_type, 'e')}).collect(Collectors.toList())"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-        return f"{{{from_scval(td.map.key_type, 'k')}: {from_scval(td.map.value_type, 'v')} for k, v in Scv.fromMap({name}).items()}}"
+        # return f"{{{from_scval(td.map.key_type, 'k')}: {from_scval(td.map.value_type, 'v')} for k, v in Scv.fromMap({name}).items()}}"
+        return f"Scv.fromMap({name}).entrySet().stream().collect(Collectors.toMap(e -> {from_scval(td.map.key_type, 'e.getKey()')}, e -> {from_scval(td.map.value_type, 'e.getValue()')})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
         if len(td.tuple.value_types) == 0:
-            return "None"
-        elements = f"scval.from_tuple_struct({name})"
-        types = [
-            from_scval(t, f"{elements}[{i}]")
-            for i, t in enumerate(td.tuple.value_types)
-        ]
-        return f"({', '.join(types)})"
+            return "Void"
+        return ""
+        # return
+        # elements = f"scval.from_tuple_struct({name})"
+        # types = [
+        #     from_scval(t, f"{elements}[{i}]")
+        #     for i, t in enumerate(td.tuple.value_types)
+        # ]
+        # return f"({', '.join(types)})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
         return f"Scv.fromBytes({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
@@ -231,11 +241,15 @@ def render_info():
 
 def render_imports(client_type: str = "both"):
     template = """
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
 import lombok.Value;
 import org.stellar.sdk.contract.ContractClient;
 import org.stellar.sdk.scval.Scv;
 import org.stellar.sdk.xdr.SCVal;
 
+import java.math.BigInteger;
 import java.util.*;
 """
     # NULL_ACCOUNT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
@@ -316,7 +330,7 @@ def render_struct(entry: xdr.SCSpecUDTStructV0):
 @Value
 public static class {{ entry.name.decode() }} {
     {%- for field in entry.fields %}
-    {{ to_py_type(field.type) }} {{ field.name.decode() }};
+    {{ to_java_type(field.type) }} {{ field.name.decode() }};
     {%- endfor %}
     
     public SCVal toSCVal() {
@@ -341,7 +355,7 @@ public static class {{ entry.name.decode() }} {
 
     rendered_code = Template(template).render(
         entry=entry,
-        to_py_type=to_py_type,
+        to_java_type=to_java_type,
         to_scval=to_scval,
         from_scval=from_scval,
         enumerate=enumerate,
@@ -354,7 +368,7 @@ def render_tuple_struct(entry: xdr.SCSpecUDTStructV0):
 @Value
 public static class {{ entry.name.decode() }} {
     {% for f in entry.fields %}
-    {{ to_py_type(f.type, True) }} value{{ f.name.decode() }};
+    {{ to_java_type(f.type, True) }} value{{ f.name.decode() }};
     {% endfor %}
 
     public SCVal toSCVal() {
@@ -374,7 +388,7 @@ public static class {{ entry.name.decode() }} {
 }"""
 
     rendered_code = Template(template).render(
-        entry=entry, to_py_type=to_py_type, to_scval=to_scval, from_scval=from_scval
+        entry=entry, to_java_type=to_java_type, to_scval=to_scval, from_scval=from_scval
     )
     return rendered_code
 
@@ -388,7 +402,7 @@ public static class {{ entry.name.decode() }} {
     {%- for case in entry.cases %}
     {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_TUPLE_V0 %}
     {%- if len(case.tuple_case.type) == 1 %}
-    {{ to_py_type(case.tuple_case.type[0], True) }} {{ camel_to_snake(case.tuple_case.name.decode()) }};
+    {{ to_java_type(case.tuple_case.type[0], True) }} {{ camel_to_snake(case.tuple_case.name.decode()) }};
     {%- else %}
     {{ case.tuple_case.name.decode() }}Tuple {{ camel_to_snake(case.tuple_case.name.decode()) }};
     {%- endif %}
@@ -478,9 +492,9 @@ public static class {{ entry.name.decode() }} {
     @Value
     public static class {{ case.tuple_case.name.decode() }}Tuple {
         {% for f in case.tuple_case.type %}
-        {{ to_py_type(f, True) }} value{{ loop.index0|string }};
+        {{ to_java_type(f, True) }} value{{ loop.index0|string }};
         {% endfor %}
-    };
+    }
     {%- endif %}
     {%- endif %}
     {%- endfor %}
@@ -488,7 +502,7 @@ public static class {{ entry.name.decode() }} {
 """
     union_rendered_code = Template(template).render(
         entry=entry,
-        to_py_type=to_py_type,
+        to_java_type=to_java_type,
         to_scval=to_scval,
         from_scval=from_scval,
         xdr=xdr,
@@ -501,36 +515,35 @@ public static class {{ entry.name.decode() }} {
 
 def render_client(entries: List[xdr.SCSpecFunctionV0], client_type: str):
     template = '''
-{%- if client_type == "sync" or client_type == "both" %}
-class Client(ContractClient):
-    {%- for entry in entries %}
-    def {{ entry.name.sc_symbol.decode() }}(self, {% for param in entry.inputs %}{{ param.name.decode() }}: {{ to_py_type(param.type, True) }}, {% endfor %} source: Union[str, MuxedAccount] = NULL_ACCOUNT, signer: Optional[Keypair] = None, base_fee: int = 100, transaction_timeout: int = 300, submit_timeout: int = 30, simulate: bool = True, restore: bool = True) -> AssembledTransaction[{{ parse_result_type(entry.outputs) }}]:
-        {%- if entry.doc %}
-        """{{ entry.doc.decode() }}"""
-        {%- endif %}
-        return self.invoke('{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}', [{% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}], parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
-    {%- endfor %}
-{%- endif %}
+public class Client extends ContractClient {
 
-{%- if client_type == "async" or client_type == "both" %}
-class ClientAsync(ContractClientAsync):
+    /**
+     * Creates a new {@link Client} with the given contract ID, RPC URL, and network.
+     *
+     * @param contractId The contract ID to interact with.
+     * @param rpcUrl     The RPC URL of the Soroban server.
+     * @param network    The network to interact with.
+     */
+    public Client(String contractId, String rpcUrl, Network network) {
+        super(contractId, rpcUrl, network);
+    }
+    
     {%- for entry in entries %}
-    async def {{ entry.name.sc_symbol.decode() }}(self, {% for param in entry.inputs %}{{ param.name.decode() }}: {{ to_py_type(param.type, True) }}, {% endfor %} source: Union[str, MuxedAccount] = NULL_ACCOUNT, signer: Optional[Keypair] = None, base_fee: int = 100, transaction_timeout: int = 300, submit_timeout: int = 30, simulate: bool = True, restore: bool = True) -> AssembledTransactionAsync[{{ parse_result_type(entry.outputs) }}]:
-        {%- if entry.doc %}
-        """{{ entry.doc.decode() }}"""
-        {%- endif %}
-        return await self.invoke('{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}', [{% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}], parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
-    {%- endfor %}
-{%- endif %}
+    public AssembledTransaction<?> {{ entry.name.sc_symbol.decode() }}({% for param in entry.inputs %}{{ to_java_type(param.type, True) }} {{ param.name.decode() }}, {% endfor %} String source, @Nullable KeyPair signer, int baseFee, int transactionTimeout, int submitTimeout, boolean simulate, boolean restore) {
+        return invoke('{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}', Arrays.of({% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}]), parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
+    }
+    {%- endfor %} 
+
+}
 '''
 
     def parse_result_type(output: List[xdr.SCSpecTypeDef]):
         if len(output) == 0:
             return "None"
         elif len(output) == 1:
-            return to_py_type(output[0])
+            return to_java_type(output[0])
         else:
-            return f"Tuple[{', '.join([to_py_type(t) for t in output])}]"
+            return f"Tuple[{', '.join([to_java_type(t) for t in output])}]"
 
     def parse_result_xdr_fn(output: List[xdr.SCSpecTypeDef]):
         if len(output) == 0:
@@ -544,7 +557,7 @@ class ClientAsync(ContractClientAsync):
 
     client_rendered_code = Template(template).render(
         entries=entries,
-        to_py_type=to_py_type,
+        to_java_type=to_java_type,
         to_scval=to_scval,
         parse_result_type=parse_result_type,
         parse_result_xdr_fn=parse_result_xdr_fn,
@@ -632,13 +645,13 @@ def generate_binding(specs: List[xdr.SCSpecEntry], package: str) -> str:
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
             generated.append(render_union(spec.udt_union_v0))
 
-    # function_specs: List[xdr.SCSpecFunctionV0] = [
-    #     spec.function_v0
-    #     for spec in specs
-    #     if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0
-    #        and not spec.function_v0.name.sc_symbol.decode().startswith("__")
-    # ]
-    # generated.append(render_client(function_specs, package))
+    function_specs: List[xdr.SCSpecFunctionV0] = [
+        spec.function_v0
+        for spec in specs
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0
+           and not spec.function_v0.name.sc_symbol.decode().startswith("__")
+    ]
+    generated.append(render_client(function_specs, package))
     return "\n".join(generated)
 
 
