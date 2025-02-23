@@ -417,7 +417,7 @@ public static class {{ entry.name.decode() }} {
     {%- if len(case.tuple_case.type) == 1 %}
     {{ to_java_type(case.tuple_case.type[0], True) }} {{ camel_to_snake(case.tuple_case.name.decode()) }};
     {%- else %}
-    {{ case.tuple_case.name.decode() }}Tuple {{ camel_to_snake(case.tuple_case.name.decode()) }};
+    {{ get_tuple_class_name(len(case.tuple_case.type)) }}<{% for f in case.tuple_case.type %}{{ to_java_type(f, True) }}{% if not loop.last %}, {% endif %}{% endfor %}> {{ camel_to_snake(case.tuple_case.name.decode()) }};
     {%- endif %}
     {%- endif %}
     {%- endfor %}
@@ -436,7 +436,7 @@ public static class {{ entry.name.decode() }} {
             return Scv.toVec(Arrays.asList(
                 Scv.toSymbol(this.kind.value),
                 {%- for t in case.tuple_case.type %}
-                {{ to_scval(t, 'this.' + camel_to_snake(case.tuple_case.name.decode()) + '.value' + loop.index0|string) }}{% if not loop.last %}, {% endif %}
+                {{ to_scval(t, 'this.' + camel_to_snake(case.tuple_case.name.decode()) + '.getValue' + loop.index0|string + '()') }}{% if not loop.last %}, {% endif %}
                 {%- endfor %}
             ));
         {%- endif %}
@@ -464,7 +464,7 @@ public static class {{ entry.name.decode() }} {
         {%- else %}
             return {{ entry.name.decode() }}.builder().kind(kind)
                 .{{ camel_to_snake(case.tuple_case.name.decode()) }}(
-                new {{ case.tuple_case.name.decode() }}Tuple(
+                new {{ get_tuple_class_name(len(case.tuple_case.type)) }}<>(
                     {%- for i, t in enumerate(case.tuple_case.type, 1) %}
                     {{ from_scval(t, 'elements[' + i|string + ']') }}{% if not loop.last %},{% endif %} 
                     {%- endfor %}
@@ -498,19 +498,6 @@ public static class {{ entry.name.decode() }} {
             throw new IllegalArgumentException("Unknown value: " + value);
         }
     }
-
-    {%- for case in entry.cases %}
-    {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_TUPLE_V0 %}
-    {%- if len(case.tuple_case.type) != 1 %}
-    @Value
-    public static class {{ case.tuple_case.name.decode() }}Tuple {
-        {% for f in case.tuple_case.type %}
-        {{ to_java_type(f, True) }} value{{ loop.index0|string }};
-        {% endfor %}
-    }
-    {%- endif %}
-    {%- endif %}
-    {%- endfor %}
 }
 """
     union_rendered_code = Template(template).render(
@@ -522,6 +509,7 @@ public static class {{ entry.name.decode() }} {
         len=len,
         camel_to_snake=camel_to_snake,
         enumerate=enumerate,
+        get_tuple_class_name=get_tuple_class_name,
     )
     return union_rendered_code
 
