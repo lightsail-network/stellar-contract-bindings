@@ -4,7 +4,7 @@
 
 This tool simplifies the process of interacting with Soroban contracts by generating the necessary code to call contract
 methods directly from your preferred programming language. Currently, it supports
-Python. [stellar-cli](https://github.com/stellar/stellar-cli) provides support for TypeScript and Rust.
+Python and Java. [stellar-cli](https://github.com/stellar/stellar-cli) provides support for TypeScript and Rust.
 
 ## Installation
 

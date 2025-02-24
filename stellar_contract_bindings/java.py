@@ -1,6 +1,6 @@
 import os
+import re
 from typing import List
-import black
 
 import click
 from jinja2 import Template
@@ -13,17 +13,59 @@ from stellar_contract_bindings.utils import get_specs_by_contract_id
 
 def is_keywords(word: str) -> bool:
     return word in [
-        "abstract", "assert", "boolean", "break", "byte",
-        "case", "catch", "char", "class", "const",
-        "continue", "default", "do", "double", "else",
-        "enum", "extends", "final", "finally", "float",
-        "for", "goto", "if", "implements", "import",
-        "instanceof", "int", "interface", "long", "native",
-        "new", "package", "private", "protected", "public",
-        "return", "short", "static", "strictfp", "super",
-        "switch", "synchronized", "this", "throw", "throws",
-        "transient", "try", "void", "volatile", "while",
-        "true", "false", "null"
+        "abstract",
+        "assert",
+        "boolean",
+        "break",
+        "byte",
+        "case",
+        "catch",
+        "char",
+        "class",
+        "const",
+        "continue",
+        "default",
+        "do",
+        "double",
+        "else",
+        "enum",
+        "extends",
+        "final",
+        "finally",
+        "float",
+        "for",
+        "goto",
+        "if",
+        "implements",
+        "import",
+        "instanceof",
+        "int",
+        "interface",
+        "long",
+        "native",
+        "new",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "return",
+        "short",
+        "static",
+        "strictfp",
+        "super",
+        "switch",
+        "synchronized",
+        "this",
+        "throw",
+        "throws",
+        "transient",
+        "try",
+        "void",
+        "volatile",
+        "while",
+        "true",
+        "false",
+        "null",
     ]
 
 
@@ -32,18 +74,31 @@ def is_tuple_struct(entry: xdr.SCSpecUDTStructV0) -> bool:
     return all(f.name.isdigit() for f in entry.fields)
 
 
-def camel_to_snake(text: str) -> str:
-    v = text[0].lower() + text[1:]
-    if is_keywords(v):
-        return f"{v}_"
-    return v
+def convert_name(text: bytes) -> bytes:
+    text = text.decode()
+    # text = text[0].lower() + text[1:]
+    # Convert snake_case to camelCase
+    text = re.sub(r"_([a-z])", lambda match: match.group(1).upper(), text)
+    if is_keywords(text):
+        return f"{text}_".encode()
+    return text.encode()
 
 
 def get_tuple_class_name(amount: int) -> str:
     if amount < 1 or amount > 10:
         raise ValueError("amount should be between 1 and 10")
-    return ["Unit", "Pair", "Triplet", "Quartet", "Quintet", "Sextet", "Septet", "Octet", "Ennead", "Decade"][
-        amount - 1]
+    return [
+        "Unit",
+        "Pair",
+        "Triplet",
+        "Quartet",
+        "Quintet",
+        "Sextet",
+        "Septet",
+        "Octet",
+        "Ennead",
+        "Decade",
+    ][amount - 1]
 
 
 def to_java_type(td: xdr.SCSpecTypeDef, input_type: bool = False):
@@ -220,7 +275,6 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str):
     raise NotImplementedError(f"Unsupported SCValType: {t}")
 
 
-
 def render_imports(client_ty):
     template = """
 // https://mvnrepository.com/artifact/org.projectlombok/lombok
@@ -251,8 +305,6 @@ import java.math.BigInteger;
 import java.util.*;
 import java.util.stream.Collectors;
 """
-    # NULL_ACCOUNT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
-
     rendered_code = Template(template).render()
     return rendered_code
 
@@ -268,8 +320,8 @@ public enum {{ entry.name.decode() }} {
 
     private final long value;
     
-    public static RoyalCard fromValue(long value) {
-        for (RoyalCard card : RoyalCard.values()) {
+    public static {{ entry.name.decode() }} fromValue(long value) {
+        for ({{ entry.name.decode()  }} card : {{ entry.name.decode() }}.values()) {
             if (card.value == value) {
                 return card;
             }
@@ -281,7 +333,7 @@ public enum {{ entry.name.decode() }} {
         return Scv.toUint32(value);
     }
 
-    public static RoyalCard fromSCVal(SCVal scVal) {
+    public static {{ entry.name.decode() }} fromSCVal(SCVal scVal) {
         return fromValue(Scv.fromUint32(scVal));
     }
 }
@@ -302,8 +354,8 @@ public enum {{ entry.name.decode() }} {
 
     private final long value;
     
-    public static RoyalCard fromValue(long value) {
-        for (RoyalCard card : RoyalCard.values()) {
+    public static {{ entry.name.decode() }} fromValue(long value) {
+        for ({{ entry.name.decode() }} card : {{ entry.name.decode() }}.values()) {
             if (card.value == value) {
                 return card;
             }
@@ -315,7 +367,7 @@ public enum {{ entry.name.decode() }} {
         return Scv.toUint32(value);
     }
 
-    public static RoyalCard fromSCVal(SCVal scVal) {
+    public static {{ entry.name.decode() }} fromSCVal(SCVal scVal) {
         return fromValue(Scv.fromUint32(scVal));
     }
 }"""
@@ -401,9 +453,9 @@ public static class {{ entry.name.decode() }} {
     {%- for case in entry.cases %}
     {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_TUPLE_V0 %}
     {%- if len(case.tuple_case.type) == 1 %}
-    {{ to_java_type(case.tuple_case.type[0], True) }} {{ camel_to_snake(case.tuple_case.name.decode()) }};
+    {{ to_java_type(case.tuple_case.type[0], True) }} {{ case.tuple_case.name.decode() }};
     {%- else %}
-    {{ get_tuple_class_name(len(case.tuple_case.type)) }}<{% for f in case.tuple_case.type %}{{ to_java_type(f, True) }}{% if not loop.last %}, {% endif %}{% endfor %}> {{ camel_to_snake(case.tuple_case.name.decode()) }};
+    {{ get_tuple_class_name(len(case.tuple_case.type)) }}<{% for f in case.tuple_case.type %}{{ to_java_type(f, True) }}{% if not loop.last %}, {% endif %}{% endfor %}> {{ case.tuple_case.name.decode() }};
     {%- endif %}
     {%- endif %}
     {%- endfor %}
@@ -417,12 +469,12 @@ public static class {{ entry.name.decode() }} {
         {%- else %}
         if (this.kind == Kind.{{ case.tuple_case.name.decode() }}) {
         {%- if len(case.tuple_case.type) == 1 %}
-            return Scv.toVec(Arrays.asList(Scv.toSymbol(this.kind.value), {{ to_scval(case.tuple_case.type[0], 'this.' ~ camel_to_snake(case.tuple_case.name.decode())) }}));        
+            return Scv.toVec(Arrays.asList(Scv.toSymbol(this.kind.value), {{ to_scval(case.tuple_case.type[0], 'this.' ~ case.tuple_case.name.decode()) }}));        
         {%- else %}
             return Scv.toVec(Arrays.asList(
                 Scv.toSymbol(this.kind.value),
                 {%- for t in case.tuple_case.type %}
-                {{ to_scval(t, 'this.' + camel_to_snake(case.tuple_case.name.decode()) + '.getValue' + loop.index0|string + '()') }}{% if not loop.last %}, {% endif %}
+                {{ to_scval(t, 'this.' + case.tuple_case.name.decode() + '.getValue' + loop.index0|string + '()') }}{% if not loop.last %}, {% endif %}
                 {%- endfor %}
             ));
         {%- endif %}
@@ -446,10 +498,10 @@ public static class {{ entry.name.decode() }} {
         {%- else %}
         if (kind == Kind.{{ case.tuple_case.name.decode() }}) {
         {%- if len(case.tuple_case.type) == 1 %}
-            return {{ entry.name.decode() }}.builder().kind(kind).{{ camel_to_snake(case.tuple_case.name.decode()) }}({{ from_scval(case.tuple_case.type[0], 'elements[1]') }}).build();
+            return {{ entry.name.decode() }}.builder().kind(kind).{{ case.tuple_case.name.decode() }}({{ from_scval(case.tuple_case.type[0], 'elements[1]') }}).build();
         {%- else %}
             return {{ entry.name.decode() }}.builder().kind(kind)
-                .{{ camel_to_snake(case.tuple_case.name.decode()) }}(
+                .{{ case.tuple_case.name.decode() }}(
                 new {{ get_tuple_class_name(len(case.tuple_case.type)) }}<>(
                     {%- for i, t in enumerate(case.tuple_case.type, 1) %}
                     {{ from_scval(t, 'elements[' + i|string + ']') }}{% if not loop.last %},{% endif %} 
@@ -493,7 +545,6 @@ public static class {{ entry.name.decode() }} {
         from_scval=from_scval,
         xdr=xdr,
         len=len,
-        camel_to_snake=camel_to_snake,
         enumerate=enumerate,
         get_tuple_class_name=get_tuple_class_name,
     )
@@ -501,7 +552,7 @@ public static class {{ entry.name.decode() }} {
 
 
 def render_functions(entries: List[xdr.SCSpecFunctionV0]):
-    template = '''
+    template = """
     /**
      * Creates a new {@link Client} with the given contract ID, RPC URL, and network.
      *
@@ -515,12 +566,15 @@ def render_functions(entries: List[xdr.SCSpecFunctionV0]):
     
     
     {%- for entry in entries %}
-    public AssembledTransaction<{{ parse_result_type(entry.outputs) }}> {{ entry.name.sc_symbol.decode() }}({% for param in entry.inputs %}{{ to_java_type(param.type, True) }} {{ param.name.decode() }}, {% endfor %} String source, KeyPair signer, int baseFee, int transactionTimeout, int submitTimeout, boolean simulate, boolean restore) {
+    public AssembledTransaction<{{ parse_result_type(entry.outputs) }}> {{ entry.name.sc_symbol.decode() }}({% for param in entry.inputs %}{{ to_java_type(param.type, True) }} {{ param.name.decode() }}, {% endfor %}String source, KeyPair signer, int baseFee) {
+        return {{ entry.name.sc_symbol.decode() }}({% for param in entry.inputs %}{{ param.name.decode() }}, {% endfor %} source, signer, baseFee, 300, 30, true, true);
+    }
+    public AssembledTransaction<{{ parse_result_type(entry.outputs) }}> {{ entry.name.sc_symbol.decode() }}({% for param in entry.inputs %}{{ to_java_type(param.type, True) }} {{ param.name.decode() }}, {% endfor %}String source, KeyPair signer, int baseFee, int transactionTimeout, int submitTimeout, boolean simulate, boolean restore) {
         return invoke("{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}", Arrays.asList({% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}), source, signer, {{ parse_result_xdr_fn(entry.outputs) }}, baseFee, transactionTimeout, submitTimeout, simulate, restore);
     }
     {%- endfor %} 
 
-'''
+"""
 
     def parse_result_type(output: List[xdr.SCSpecTypeDef]):
         if len(output) == 0:
@@ -555,66 +609,61 @@ def append_underscore(specs: List[xdr.SCSpecEntry]):
     for spec in specs:
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0:
             assert spec.udt_struct_v0 is not None
-            if is_keywords(spec.udt_struct_v0.name.decode()):
-                spec.udt_struct_v0.name_r = spec.udt_struct_v0.name  # type: ignore[attr-defined]
-                spec.udt_struct_v0.name = spec.udt_struct_v0.name + b"_"
+            spec.udt_struct_v0.name_r = spec.udt_struct_v0.name  # type: ignore[attr-defined]
+            spec.udt_struct_v0.name = convert_name(spec.udt_struct_v0.name)
             for field in spec.udt_struct_v0.fields:
-                if is_keywords(field.name.decode()):
-                    field.name_r = field.name  # type: ignore[attr-defined]
-                    field.name = field.name + b"_"
+                field.name_r = field.name  # type: ignore[attr-defined]
+                field.name = convert_name(field.name)
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
             assert spec.udt_union_v0 is not None
-            if is_keywords(spec.udt_union_v0.name.decode()):
-                spec.udt_union_v0.name_r = spec.udt_union_v0.name  # type: ignore[attr-defined]
-                spec.udt_union_v0.name = spec.udt_union_v0.name + b"_"
+            spec.udt_union_v0.name_r = spec.udt_union_v0.name  # type: ignore[attr-defined]
+            spec.udt_union_v0.name = convert_name(spec.udt_union_v0.name)
             for union_case in spec.udt_union_v0.cases:
                 if (
-                        union_case.kind
-                        == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_TUPLE_V0
+                    union_case.kind
+                    == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_TUPLE_V0
                 ):
-                    if is_keywords(union_case.tuple_case.name.decode()):
-                        union_case.tuple_case.name_r = union_case.tuple_case.name  # type: ignore[attr-defined]
-                        union_case.tuple_case.name = union_case.tuple_case.name + b"_"
+                    union_case.tuple_case.name_r = union_case.tuple_case.name  # type: ignore[attr-defined]
+                    union_case.tuple_case.name = convert_name(
+                        union_case.tuple_case.name
+                    )
                 elif (
-                        union_case.kind
-                        == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0
+                    union_case.kind
+                    == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0
                 ):
-                    if is_keywords(union_case.void_case.name.decode()):
-                        union_case.void_case.name_r = union_case.void_case.name  # type: ignore[attr-defined]
-                        union_case.void_case.name = union_case.void_case.name + b"_"
+                    union_case.void_case.name_r = union_case.void_case.name  # type: ignore[attr-defined]
+                    union_case.void_case.name = convert_name(union_case.void_case.name)
                 else:
                     raise ValueError(f"Unsupported union case kind: {union_case.kind}")
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0:
             assert spec.function_v0 is not None
-            if is_keywords(spec.function_v0.name.sc_symbol.decode()):
-                spec.function_v0.name.sc_symbol_r = spec.function_v0.name.sc_symbol  # type: ignore[attr-defined]
-                spec.function_v0.name.sc_symbol = spec.function_v0.name.sc_symbol + b"_"
+            spec.function_v0.name.sc_symbol_r = spec.function_v0.name.sc_symbol  # type: ignore[attr-defined]
+            spec.function_v0.name.sc_symbol = convert_name(
+                spec.function_v0.name.sc_symbol
+            )
             for param in spec.function_v0.inputs:
-                if is_keywords(param.name.decode()):
-                    param.name = param.name + b"_"
+                param.name = convert_name(param.name)
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ENUM_V0:
             assert spec.udt_enum_v0 is not None
-            if is_keywords(spec.udt_enum_v0.name.decode()):
-                spec.udt_enum_v0.name_r = spec.udt_enum_v0.name  # type: ignore[attr-defined]
-                spec.udt_enum_v0.name = spec.udt_enum_v0.name + b"_"
+            spec.udt_enum_v0.name_r = spec.udt_enum_v0.name  # type: ignore[attr-defined]
+            spec.udt_enum_v0.name = convert_name(spec.udt_enum_v0.name)
             for enum_case in spec.udt_enum_v0.cases:
-                if is_keywords(enum_case.name.decode()):
-                    enum_case.name = enum_case.name + b"_"
+                enum_case.name = convert_name(enum_case.name)
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ERROR_ENUM_V0:
             assert spec.udt_error_enum_v0 is not None
-            if is_keywords(spec.udt_error_enum_v0.name.decode()):
-                spec.udt_error_enum_v0.name_r = spec.udt_error_enum_v0.name  # type: ignore[attr-defined]
-                spec.udt_error_enum_v0.name = spec.udt_error_enum_v0.name + b"_"
+            spec.udt_error_enum_v0.name_r = spec.udt_error_enum_v0.name  # type: ignore[attr-defined]
+            spec.udt_error_enum_v0.name = convert_name(spec.udt_error_enum_v0.name)
             for error_enum_case in spec.udt_error_enum_v0.cases:
-                if is_keywords(error_enum_case.name.decode()):
-                    error_enum_case.name = error_enum_case.name + b"_"
+                error_enum_case.name = convert_name(error_enum_case.name)
 
 
 def generate_binding(specs: List[xdr.SCSpecEntry], package: str) -> str:
     append_underscore(specs)
 
     generated = []
-    generated.append(f"// This file was generated by stellar_contract_bindings v{stellar_contract_bindings_version} and stellar_sdk v{stellar_sdk_version}.")
+    generated.append(
+        f"// This file was generated by stellar_contract_bindings v{stellar_contract_bindings_version} and stellar_sdk v{stellar_sdk_version}."
+    )
     generated.append(f"package {package};")
     generated.append(render_imports(package))
     generated.append("public class Client extends ContractClient {")
@@ -623,7 +672,7 @@ def generate_binding(specs: List[xdr.SCSpecEntry], package: str) -> str:
         spec.function_v0
         for spec in specs
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0
-           and not spec.function_v0.name.sc_symbol.decode().startswith("__")
+        and not spec.function_v0.name.sc_symbol.decode().startswith("__")
     ]
     generated.append(render_functions(function_specs))
 
