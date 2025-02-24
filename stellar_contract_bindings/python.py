@@ -216,6 +216,8 @@ def render_info():
 
 def render_imports(client_type: str = "both"):
     template = """
+from __future__ import annotations
+
 from enum import IntEnum, Enum
 from typing import Dict, List, Tuple, Optional, Union
 
@@ -417,6 +419,7 @@ class {{ entry.name.decode() }}:
         {%- endif %}
         {%- endif %}
         {%- endfor %}
+        raise ValueError(f"Invalid kind: {self.kind}")
     
     @classmethod
     def from_scval(cls, val: xdr.SCVal):
@@ -442,6 +445,7 @@ class {{ entry.name.decode() }}:
         {%- endif %}
         {%- endif %}
         {%- endfor %}
+        raise ValueError(f"Invalid kind: {kind}")
     
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, {{ entry.name.decode() }}):
