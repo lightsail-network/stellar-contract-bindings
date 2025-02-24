@@ -4,7 +4,7 @@
 
 This tool simplifies the process of interacting with Soroban contracts by generating the necessary code to call contract
 methods directly from your preferred programming language. Currently, it supports
-Python. [stellar-cli](https://github.com/stellar/stellar-cli) provides support for TypeScript and Rust.
+Python and Java. [stellar-cli](https://github.com/stellar/stellar-cli) provides support for TypeScript and Rust.
 
 ## Installation
 
@@ -32,9 +32,9 @@ This command will generate Python binding for the specified contract and save it
 
 ### Using the Generated Binding
 
-#### Python
-
 After generating the binding, you can use it to interact with your Soroban contract. Here's an example:
+
+#### Python
 
 ```python
 from stellar_sdk import Network
@@ -48,6 +48,17 @@ client = Client(contract_id, rpc_url, network_passphrase)
 assembled_tx = client.hello(b"world")
 print(assembled_tx.result())
 # assembled_tx.sign_and_submit()
+```
+
+#### Java
+```java
+public class Example extends ContractClient {
+    public static void main(String[] args) {
+        KeyPair kp = KeyPair.fromAccountId("GD5KKP3LHUDXLDCGKP55NLEOEHMS3Z4BS6IDDZFCYU3BDXUZTBWL7JNF");
+        Client client = new Client("CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF", "https://mainnet.sorobanrpc.com", Network.PUBLIC);
+        AssembledTransaction<List<byte[]>> tx = client.hello("World".getBytes(), kp.getAccountId(), kp, 100);
+    }
+}
 ```
 
 ## License
