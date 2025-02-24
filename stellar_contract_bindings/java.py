@@ -74,9 +74,10 @@ def is_tuple_struct(entry: xdr.SCSpecUDTStructV0) -> bool:
     return all(f.name.isdigit() for f in entry.fields)
 
 
-def convert_name(text: bytes) -> bytes:
+def convert_name(text: bytes, first_letter_lower=False) -> bytes:
     text = text.decode()
-    # text = text[0].lower() + text[1:]
+    if first_letter_lower:
+        text = text[0].lower() + text[1:]
     # Convert snake_case to camelCase
     text = re.sub(r"_([a-z])", lambda match: match.group(1).upper(), text)
     if is_keywords(text):
@@ -453,13 +454,13 @@ public static class {{ entry.name.decode() }} {
     {%- for case in entry.cases %}
     {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_TUPLE_V0 %}
     {%- if len(case.tuple_case.type) == 1 %}
-    {{ to_java_type(case.tuple_case.type[0], True) }} {{ case.tuple_case.name.decode() }};
+    {{ to_java_type(case.tuple_case.type[0], True) }} {{ convert_name(case.tuple_case.name, True).decode() }};
     {%- else %}
-    {{ get_tuple_class_name(len(case.tuple_case.type)) }}<{% for f in case.tuple_case.type %}{{ to_java_type(f, True) }}{% if not loop.last %}, {% endif %}{% endfor %}> {{ case.tuple_case.name.decode() }};
+    {{ get_tuple_class_name(len(case.tuple_case.type)) }}<{% for f in case.tuple_case.type %}{{ to_java_type(f, True) }}{% if not loop.last %}, {% endif %}{% endfor %}> {{ convert_name(case.tuple_case.name, True).decode() }};
     {%- endif %}
     {%- endif %}
     {%- endfor %}
-    
+
     public SCVal toSCVal() {
         {%- for case in entry.cases %}
         {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0 %}
@@ -469,27 +470,27 @@ public static class {{ entry.name.decode() }} {
         {%- else %}
         if (this.kind == Kind.{{ case.tuple_case.name.decode() }}) {
         {%- if len(case.tuple_case.type) == 1 %}
-            return Scv.toVec(Arrays.asList(Scv.toSymbol(this.kind.value), {{ to_scval(case.tuple_case.type[0], 'this.' ~ case.tuple_case.name.decode()) }}));        
+            return Scv.toVec(Arrays.asList(Scv.toSymbol(this.kind.value), {{ to_scval(case.tuple_case.type[0], 'this.' ~ convert_name(case.tuple_case.name, True).decode()) }}));        
         {%- else %}
             return Scv.toVec(Arrays.asList(
                 Scv.toSymbol(this.kind.value),
                 {%- for t in case.tuple_case.type %}
-                {{ to_scval(t, 'this.' + case.tuple_case.name.decode() + '.getValue' + loop.index0|string + '()') }}{% if not loop.last %}, {% endif %}
+                {{ to_scval(t, 'this.' + convert_name(case.tuple_case.name, True).decode() + '.getValue' + loop.index0|string + '()') }}{% if not loop.last %}, {% endif %}
                 {%- endfor %}
             ));
         {%- endif %}
         }
         {%- endif %}
         {%- endfor %} 
-        
+
         throw new IllegalArgumentException("Unknown kind: " + this.kind);
     }
-    
-    
+
+
     public static {{ entry.name.decode() }} fromSCVal(SCVal scVal) {
         SCVal[] elements = Scv.fromVec(scVal).toArray(new SCVal[0]);
         Kind kind = Kind.fromValue(Scv.fromSymbol(elements[0]));
-        
+
         {%- for case in entry.cases %}
         {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0 %}
         if (kind == Kind.{{ case.void_case.name.decode() }}) {
@@ -498,10 +499,10 @@ public static class {{ entry.name.decode() }} {
         {%- else %}
         if (kind == Kind.{{ case.tuple_case.name.decode() }}) {
         {%- if len(case.tuple_case.type) == 1 %}
-            return {{ entry.name.decode() }}.builder().kind(kind).{{ case.tuple_case.name.decode() }}({{ from_scval(case.tuple_case.type[0], 'elements[1]') }}).build();
+            return {{ entry.name.decode() }}.builder().kind(kind).{{ convert_name(case.tuple_case.name, True).decode() }}({{ from_scval(case.tuple_case.type[0], 'elements[1]') }}).build();
         {%- else %}
             return {{ entry.name.decode() }}.builder().kind(kind)
-                .{{ case.tuple_case.name.decode() }}(
+                .{{ convert_name(case.tuple_case.name, True).decode() }}(
                 new {{ get_tuple_class_name(len(case.tuple_case.type)) }}<>(
                     {%- for i, t in enumerate(case.tuple_case.type, 1) %}
                     {{ from_scval(t, 'elements[' + i|string + ']') }}{% if not loop.last %},{% endif %} 
@@ -513,7 +514,7 @@ public static class {{ entry.name.decode() }} {
         {%- endfor %}
         throw new IllegalArgumentException("Unknown kind: " + kind);
     }
-    
+
     @Getter
     @AllArgsConstructor
     public enum Kind {
@@ -524,9 +525,9 @@ public static class {{ entry.name.decode() }} {
         {{ case.tuple_case.name.decode() }}("{{ case.tuple_case.name.decode() if case.tuple_case.name_r else case.tuple_case.name.decode() }}"){% if loop.last %};{% else %},{% endif %}
         {%- endif %}
         {%- endfor %}
-        
+
         private final String value;
-        
+
         public static Kind fromValue(String value) {
             for (Kind kind : Kind.values()) {
                 if (kind.value.equals(value)) {
@@ -545,6 +546,7 @@ public static class {{ entry.name.decode() }} {
         from_scval=from_scval,
         xdr=xdr,
         len=len,
+        convert_name=convert_name,
         enumerate=enumerate,
         get_tuple_class_name=get_tuple_class_name,
     )
