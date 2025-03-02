@@ -52,6 +52,17 @@ jobs:
       - name: Generate bindings
         run: uv run stellar-contract-bindings python --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF --rpc-url https://mainnet.sorobanrpc.com --output ./bindings
 
+  web:
+    needs: [ test ]
+    runs-on: ubuntu-latest
+    steps:
+      - run: cd web_interface
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
   deploy:
     needs: [ test ]
     runs-on: ubuntu-latest
@@ -75,7 +86,7 @@ jobs:
 
   complete:
     if: always()
-    needs: [ test, deploy ]
+    needs: [ test, web, deploy ]
     runs-on: ubuntu-latest
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
