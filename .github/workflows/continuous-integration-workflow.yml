@@ -53,7 +53,8 @@ jobs:
         run: uv run stellar-contract-bindings python --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF --rpc-url https://mainnet.sorobanrpc.com --output ./bindings
 
   web:
-#    needs: [ test ]
+    needs: [ test ]
+    if: github.event_name != 'pull_request' # Ensure this job does not run for pull requests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +64,7 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
   deploy:
-    needs: [ test ]
+    needs: [ test, web ]
     runs-on: ubuntu-latest
     if: github.event_name == 'release' && github.event.action == 'created'
     permissions:
