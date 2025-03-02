@@ -6,6 +6,9 @@ This tool simplifies the process of interacting with Soroban contracts by genera
 methods directly from your preferred programming language. Currently, it supports
 Python and Java. [stellar-cli](https://github.com/stellar/stellar-cli) provides support for TypeScript and Rust.
 
+## Web Interface
+We have a web interface for generating bindings. You can access via [https://stellar-contract-bindings.fly.dev/](https://stellar-contract-bindings.fly.dev/).
+
 ## Installation
 
 You can install `stellar-contract-bindings` using pip:

@@ -34,3 +34,6 @@ dev = [
 
 [tool.uv]
 package = true
+
+[tool.setuptools]
+packages = ["stellar_contract_bindings"]

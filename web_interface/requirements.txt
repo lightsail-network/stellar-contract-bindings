@@ -1,0 +1,4 @@
+Flask==3.1.0
+stellar-contract-bindings @ git+https://github.com/lightsail-network/stellar-contract-bindings.git@main
+black
+gunicorn
