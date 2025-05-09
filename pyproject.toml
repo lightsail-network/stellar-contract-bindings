@@ -1,6 +1,6 @@
 [project]
 name = "stellar-contract-bindings"
-version = "0.3.0b0"
+version = "0.4.0b0"
 description = "CLI tool designed to generate language bindings for Stellar Soroban smart contracts."
 readme = "README.md"
 requires-python = ">=3.9"
