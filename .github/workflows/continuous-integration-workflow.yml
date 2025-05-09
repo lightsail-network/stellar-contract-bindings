@@ -3,6 +3,7 @@ name: Test and Deploy
 on:
   push:
   pull_request:
+  workflow_dispatch:
   release:
     types:
       - created
@@ -55,7 +56,7 @@ jobs:
 
   web:
     needs: [test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'release' && github.event.action == 'created' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,7 +66,7 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
   deploy:
-    needs: [test, web]
+    needs: [test]
     runs-on: ubuntu-latest
     if: github.event_name == 'release' && github.event.action == 'created'
     permissions:
