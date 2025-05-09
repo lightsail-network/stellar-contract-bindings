@@ -13,23 +13,24 @@ jobs:
       fail-fast: false
       matrix:
         # https://endoflife.date/python
-        platform: [
-          { os: 'ubuntu-latest',  python-version: '3.9' },
-          { os: 'ubuntu-latest',  python-version: '3.10' },
-          { os: 'ubuntu-latest',  python-version: '3.11' },
-          { os: 'ubuntu-latest',  python-version: '3.12' },
-          { os: 'ubuntu-latest',  python-version: '3.13' },
-          { os: 'macos-latest',  python-version: '3.9' },
-          { os: 'macos-latest',  python-version: '3.10' },
-          { os: 'macos-latest',  python-version: '3.11' },
-          { os: 'macos-latest',  python-version: '3.12' },
-          { os: 'macos-latest',  python-version: '3.13' },
-          { os: 'windows-latest',  python-version: '3.9' },
-          { os: 'windows-latest',  python-version: '3.10' },
-          { os: 'windows-latest',  python-version: '3.11' },
-          { os: 'windows-latest',  python-version: '3.12' },
-          { os: 'windows-latest',  python-version: '3.13' },
-        ]
+        platform:
+          [
+            { os: "ubuntu-latest", python-version: "3.9" },
+            { os: "ubuntu-latest", python-version: "3.10" },
+            { os: "ubuntu-latest", python-version: "3.11" },
+            { os: "ubuntu-latest", python-version: "3.12" },
+            { os: "ubuntu-latest", python-version: "3.13" },
+            { os: "macos-latest", python-version: "3.9" },
+            { os: "macos-latest", python-version: "3.10" },
+            { os: "macos-latest", python-version: "3.11" },
+            { os: "macos-latest", python-version: "3.12" },
+            { os: "macos-latest", python-version: "3.13" },
+            { os: "windows-latest", python-version: "3.9" },
+            { os: "windows-latest", python-version: "3.10" },
+            { os: "windows-latest", python-version: "3.11" },
+            { os: "windows-latest", python-version: "3.12" },
+            { os: "windows-latest", python-version: "3.13" },
+          ]
     runs-on: ${{ matrix.platform.os }}
     steps:
       - uses: actions/checkout@v3
@@ -53,8 +54,8 @@ jobs:
         run: uv run stellar-contract-bindings python --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF --rpc-url https://mainnet.sorobanrpc.com --output ./bindings
 
   web:
-    needs: [ test ]
-    if: github.event_name != 'pull_request' # Ensure this job does not run for pull requests
+    needs: [test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +65,7 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
   deploy:
-    needs: [ test, web ]
+    needs: [test, web]
     runs-on: ubuntu-latest
     if: github.event_name == 'release' && github.event.action == 'created'
     permissions:
@@ -86,7 +87,7 @@ jobs:
 
   complete:
     if: always()
-    needs: [ test, web, deploy ]
+    needs: [test, web, deploy]
     runs-on: ubuntu-latest
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')

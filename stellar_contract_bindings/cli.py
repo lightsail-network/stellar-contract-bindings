@@ -13,3 +13,18 @@ def cli():
 
 cli.add_command(python_command)
 cli.add_command(java_command)
+
+
+# https://github.com/lightsail-network/stellar-contract-bindings/issues/14
+def cli_python():
+    """CLI for generating Stellar contract bindings (Python)."""
+    python_command()
+
+
+def cli_java():
+    """CLI for generating Stellar contract bindings (Java)."""
+    java_command()
+
+
+if __name__ == "__main__":
+    cli()

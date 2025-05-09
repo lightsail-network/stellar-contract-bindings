@@ -6,9 +6,9 @@ from stellar_sdk.contract.exceptions import SimulationFailedError
 
 from .client import *
 
-CONTRACT_ID = "CDOB7XVKXR3Q5Z3VN3IWJUBJ5IIZGP6Y47KHC3ZV6XHBTDVBZY2MAHT6"
-RPC_URL = "https://soroban-testnet.stellar.org"
-NETWORK_PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE
+CONTRACT_ID = "CDNKYYYVEYEYTWAME33UBT4JSSEXBIFCWNITVPU2GYURMWGJAORKDM73"
+RPC_URL = "https://soroban-rpc.creit.tech"
+NETWORK_PASSPHRASE = Network.PUBLIC_NETWORK_PASSPHRASE
 
 
 class TestClient:
