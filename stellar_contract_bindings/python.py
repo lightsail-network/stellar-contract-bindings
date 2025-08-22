@@ -65,6 +65,8 @@ def to_py_type(td: xdr.SCSpecTypeDef, input_type: bool = False):
         return "str"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
         return "Union[Address, str]" if input_type else "Address"
+    if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
+        raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return f"Optional[{to_py_type(td.option.value_type, input_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
@@ -125,6 +127,8 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str):
         return f"scval.to_symbol({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
         return f"scval.to_address({name})"
+    if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
+        raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return f"{to_scval(td.option.value_type, name)} if {name} is not None else scval.to_void()"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
@@ -183,6 +187,8 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str):
         return f"scval.from_symbol({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
         return f"scval.from_address({name})"
+    if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
+        raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return f"{from_scval(td.option.value_type, name)} if {name}.type != xdr.SCValType.SCV_VOID else scval.from_void({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
