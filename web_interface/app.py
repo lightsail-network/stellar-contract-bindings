@@ -2,6 +2,9 @@ from flask import Flask, render_template_string, request
 from typing import Literal
 from stellar_contract_bindings.java import generate_binding as generate_java_binding
 from stellar_contract_bindings.python import generate_binding as generate_python_binding
+from stellar_contract_bindings.flutter import generate_binding as generate_flutter_binding
+from stellar_contract_bindings.php import generate_binding as generate_php_binding
+from stellar_contract_bindings.swift import generate_binding as generate_swift_binding
 from stellar_contract_bindings.utils import get_specs_by_contract_id
 import black
 
@@ -12,13 +15,22 @@ required_fields = {
         "package": {"label": "Java Package", "default": "org.example", "type": "text"}
     },
     "python": {},
+    "flutter": {
+        "class_name": {"label": "Class Name", "default": "Contract", "type": "text"}
+    },
+    "php": {
+        "class_name": {"label": "Class Name", "default": "Contract", "type": "text"}
+    },
+    "swift": {
+        "class_name": {"label": "Class Name", "default": "Contract", "type": "text"}
+    },
 }
 
 
 def generate_code(
     contract_id: str,
     rpc_url: str,
-    language: str = Literal["python", "java"],
+    language: str = Literal["python", "java", "flutter", "php", "swift"],
     extra_fields: dict = None,
 ) -> str:
 
@@ -33,6 +45,18 @@ def generate_code(
     elif language == "java":
         package = extra_fields.get("package", "org.example")
         code = generate_java_binding(specs, package)
+        return code
+    elif language == "flutter":
+        class_name = extra_fields.get("class_name", "Contract")
+        code = generate_flutter_binding(specs, class_name)
+        return code
+    elif language == "php":
+        class_name = extra_fields.get("class_name", "Contract")
+        code = generate_php_binding(specs, class_name)
+        return code
+    elif language == "swift":
+        class_name = extra_fields.get("class_name", "Contract")
+        code = generate_swift_binding(specs, class_name)
         return code
     else:
         return "Unsupported language selected."
