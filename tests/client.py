@@ -677,6 +677,30 @@ class Client(ContractClient):
             restore=restore,
         )
 
+    def muxed_address(
+        self,
+        address: Union[Address, str],
+        source: Union[str, MuxedAccount] = NULL_ACCOUNT,
+        signer: Optional[Keypair] = None,
+        base_fee: int = 100,
+        transaction_timeout: int = 300,
+        submit_timeout: int = 30,
+        simulate: bool = True,
+        restore: bool = True,
+    ) -> AssembledTransaction[Address]:
+        return self.invoke(
+            "muxed_address",
+            [scval.to_address(address)],
+            parse_result_xdr_fn=lambda v: scval.from_address(v),
+            source=source,
+            signer=signer,
+            base_fee=base_fee,
+            transaction_timeout=transaction_timeout,
+            submit_timeout=submit_timeout,
+            simulate=simulate,
+            restore=restore,
+        )
+
     def bytes_(
         self,
         bytes_: bytes,
@@ -1516,6 +1540,30 @@ class ClientAsync(ContractClientAsync):
     ) -> AssembledTransactionAsync[Address]:
         return await self.invoke(
             "address",
+            [scval.to_address(address)],
+            parse_result_xdr_fn=lambda v: scval.from_address(v),
+            source=source,
+            signer=signer,
+            base_fee=base_fee,
+            transaction_timeout=transaction_timeout,
+            submit_timeout=submit_timeout,
+            simulate=simulate,
+            restore=restore,
+        )
+
+    async def muxed_address(
+        self,
+        address: Union[Address, str],
+        source: Union[str, MuxedAccount] = NULL_ACCOUNT,
+        signer: Optional[Keypair] = None,
+        base_fee: int = 100,
+        transaction_timeout: int = 300,
+        submit_timeout: int = 30,
+        simulate: bool = True,
+        restore: bool = True,
+    ) -> AssembledTransactionAsync[Address]:
+        return await self.invoke(
+            "muxed_address",
             [scval.to_address(address)],
             parse_result_xdr_fn=lambda v: scval.from_address(v),
             source=source,

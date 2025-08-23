@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Bytes, BytesN,
-    Duration, Env, Map, String, Symbol, Timepoint, Val, Vec, I256, U256,
+    Duration, Env, Map, MuxedAddress, String, Symbol, Timepoint, Val, Vec, I256, U256,
 };
 
 #[contract]
@@ -151,6 +151,10 @@ impl Contract {
     }
 
     pub fn address(_env: Env, address: Address) -> Address {
+        address
+    }
+
+    pub fn muxed_address(_env: Env, address: MuxedAddress) -> MuxedAddress {
         address
     }
 
