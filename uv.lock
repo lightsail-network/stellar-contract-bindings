@@ -1037,7 +1037,7 @@ wheels = [
 
 [[package]]
 name = "stellar-contract-bindings"
-version = "0.4.1b0"
+version = "0.5.0b0"
 source = { editable = "." }
 dependencies = [
     { name = "black" },
