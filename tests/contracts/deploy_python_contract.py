@@ -19,5 +19,5 @@ wasm_id = ContractClient.upload_contract_wasm(wasm_bytes, kp.public_key, kp, sor
 print(f"WASM Uploaded, ID: {wasm_id.hex()}")
 
 contract_id = ContractClient.create_contract(wasm_id, kp.public_key, kp, soroban_server,
-                                             network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE, salt=b'\x00' * 32)
+                                             network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE)
 print(f"Contract Created, ID: {contract_id}")

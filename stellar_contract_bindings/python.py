@@ -63,7 +63,7 @@ def to_py_type(td: xdr.SCSpecTypeDef, input_type: bool = False):
         return "bytes"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL:
         return "str"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
+    if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         return "Union[Address, str]" if input_type else "Address"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
@@ -125,7 +125,7 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str):
         return f"scval.to_string({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL:
         return f"scval.to_symbol({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
+    if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         return f"scval.to_address({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
@@ -185,7 +185,7 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str):
         return f"scval.from_string({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL:
         return f"scval.from_symbol({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
+    if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         return f"scval.from_address({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
@@ -686,7 +686,7 @@ def command(contract_id: str, rpc_url: str, output: str, client_type: str):
 if __name__ == "__main__":
     from stellar_contract_bindings.metadata import parse_contract_metadata
 
-    wasm_file = "/Users/overcat/repo/lightsail/stellar-contract-bindings/tests/contracts/target/wasm32-unknown-unknown/release/python.wasm"
+    wasm_file = "/Users/overcat/repo/lightsail/stellar-contract-bindings/tests/contracts/target/wasm32v1-none/release/python.wasm"
     with open(wasm_file, "rb") as f:
         wasm = f.read()
 

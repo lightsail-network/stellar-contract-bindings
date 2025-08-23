@@ -138,7 +138,7 @@ def to_java_type(td: xdr.SCSpecTypeDef, input_type: bool = False):
         return "byte[]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL:
         return "String"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
+    if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         return "Address"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
@@ -200,7 +200,7 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str):
         return f"Scv.toString({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL:
         return f"Scv.toSymbol({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
+    if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         return f"Scv.toAddress({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
@@ -257,7 +257,7 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str):
         return f"Scv.fromString({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL:
         return f"Scv.fromSymbol({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS:
+    if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         return f"Scv.fromAddress({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
