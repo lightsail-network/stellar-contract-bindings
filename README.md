@@ -95,7 +95,7 @@ void main() async {
   // or: final sourceKeyPair = KeyPair.fromSecretSeed("S...");
   
   // Create client instance
-  final client = await MyContractClient.forContractId(
+  final client = await MyContract.forContractId(
     sourceAccountKeyPair: sourceKeyPair,
     contractId: "CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF",
     network: Network.PUBLIC,
@@ -104,7 +104,7 @@ void main() async {
   
   // Call contract method directly
   try {
-    final result = await client.hello(input: "World");
+    final result = await client.hello(to: "World");
     print("Contract response: $result");
   } catch (e) {
     print("Error calling contract: $e");
@@ -112,7 +112,7 @@ void main() async {
   
   // Or build an assembled transaction for more control
   final assembledTx = await client.buildHelloTx(
-    input: "World",
+    to: "World",
     methodOptions: MethodOptions(),
   );
 }
