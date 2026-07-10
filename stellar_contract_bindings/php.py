@@ -1,4 +1,5 @@
 import os
+import re
 from typing import List
 
 import click
@@ -8,6 +9,10 @@ from stellar_sdk import xdr
 
 from stellar_contract_bindings import __version__ as stellar_contract_bindings_version
 from stellar_contract_bindings.utils import get_specs_by_contract_id
+
+# Minimum Soneso stellar-php-sdk version providing the SorobanClient API the
+# generated bindings depend on (SorobanClient::forClientOptions).
+MINIMUM_SDK_VERSION = "1.11.0"
 
 
 def is_php_keyword(word: str) -> bool:
@@ -58,7 +63,7 @@ def camel_to_snake(text: str) -> str:
     return result
 
 
-def escape_keyword(name: str, context: str = "property") -> str:
+def escape_keyword(name: str) -> str:
     """Escape PHP keywords by appending underscore."""
     if is_php_keyword(name):
         return f"{name}_"
@@ -134,6 +139,49 @@ def to_php_type(td: xdr.SCSpecTypeDef, nullable: bool = False, class_name: str =
     raise ValueError(f"Unsupported SCValType: {t}")
 
 
+def map_key_sort_comparator(key_td: xdr.SCSpecTypeDef) -> str:
+    """Return a PHP `fn($a, $b)` comparator ordering map entries ascending by key.
+
+    The Soroban host rejects an ScMap whose entries are not sorted ascending by
+    key, so map-argument encoding must sort before building the map. `$a`/`$b` are
+    array keys. Raises NotImplementedError for key types PHP cannot order or
+    represent as an array key.
+    """
+    t = key_td.type
+    if t in (
+        xdr.SCSpecType.SC_SPEC_TYPE_U32,
+        xdr.SCSpecType.SC_SPEC_TYPE_I32,
+        xdr.SCSpecType.SC_SPEC_TYPE_U64,
+        xdr.SCSpecType.SC_SPEC_TYPE_I64,
+        xdr.SCSpecType.SC_SPEC_TYPE_TIMEPOINT,
+        xdr.SCSpecType.SC_SPEC_TYPE_DURATION,
+        xdr.SCSpecType.SC_SPEC_TYPE_BOOL,
+    ):
+        # Integer keys (and bool keys, which PHP stores as 0/1) compare numerically.
+        return "fn($a, $b) => $a <=> $b"
+    if t in (
+        xdr.SCSpecType.SC_SPEC_TYPE_U128,
+        xdr.SCSpecType.SC_SPEC_TYPE_I128,
+        xdr.SCSpecType.SC_SPEC_TYPE_U256,
+        xdr.SCSpecType.SC_SPEC_TYPE_I256,
+    ):
+        # 128/256-bit keys are decimal strings; compare numerically, not lexically.
+        return "fn($a, $b) => gmp_cmp((string)$a, (string)$b)"
+    if t in (
+        xdr.SCSpecType.SC_SPEC_TYPE_STRING,
+        xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL,
+        xdr.SCSpecType.SC_SPEC_TYPE_BYTES,
+        xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N,
+    ):
+        # strcmp is a byte-order comparison, matching the host's ordering.
+        return "fn($a, $b) => strcmp((string)$a, (string)$b)"
+    if t in (xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS, xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS):
+        raise NotImplementedError(
+            "Address-keyed maps are not supported: a PHP array cannot key by an object"
+        )
+    raise NotImplementedError(f"Map key type {t} is not supported for sorting")
+
+
 def to_scval(td: xdr.SCSpecTypeDef, name: str, class_name: str = "") -> str:
     """Generate PHP code to convert a value to XdrSCVal."""
     t = td.type
@@ -185,19 +233,25 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str, class_name: str = "") -> str:
         inner = to_scval(td.option.value_type, name, class_name)
         return f"({var_name} !== null ? {inner} : XdrSCVal::forVoid())"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
-        return NotImplementedError("SC_SPEC_TYPE_RESULT is not supported")
+        raise NotImplementedError("SC_SPEC_TYPE_RESULT is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
         element_conversion = to_scval(td.vec.element_type, "item", class_name)
         return f"XdrSCVal::forVec(array_map(fn($item) => {element_conversion}, {var_name}))"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
+        comparator = map_key_sort_comparator(td.map.key_type)
         key_conv = to_scval(td.map.key_type, "k", class_name)
         val_conv = to_scval(td.map.value_type, "v", class_name)
-        return f"XdrSCVal::forMap(array_map(fn($k, $v) => [{key_conv}, {val_conv}], array_keys({var_name}), {var_name}))"
+        # The host rejects unsorted ScMap values, so order entries ascending by key.
+        return (
+            f"XdrSCVal::forMap((function(array $m): array {{ uksort($m, {comparator}); "
+            f"return array_map(fn($k, $v) => new XdrSCMapEntry({key_conv}, {val_conv}), "
+            f"array_keys($m), $m); }})({var_name}))"
+        )
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
         if len(td.tuple.value_types) == 0:
             return "XdrSCVal::forVoid()"
         conversions = [to_scval(td.tuple.value_types[i], f"{name}[{i}]", class_name) for i in range(len(td.tuple.value_types))]
-        return f"XdrSCVal::forTupleStruct([{', '.join(conversions)}])"
+        return f"XdrSCVal::forVec([{', '.join(conversions)}])"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
         return f"XdrSCVal::forBytes({var_name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
@@ -244,7 +298,9 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str, class_name: str = "") -> str:
         return f"Address::fromXdrSCVal(${name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         inner = from_scval(td.option.value_type, name, class_name)
-        return f"(${name}->type !== XdrSCValType::SCV_VOID ? {inner} : null)"
+        # XdrSCVal->type is an XdrSCValType object; the comparison must read its
+        # integer ->value, or the void check can never match.
+        return f"(${name}->type->value !== XdrSCValType::SCV_VOID ? {inner} : null)"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
         ok_t = td.result.ok_type
         return from_scval(ok_t, name, class_name)
@@ -252,6 +308,31 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str, class_name: str = "") -> str:
         element_conversion = from_scval(td.vec.element_type, "item", class_name)
         return f"array_map(fn($item) => {element_conversion}, ${name}->vec)"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
+        # A PHP array key must be an int or a string. Non-scalar key types
+        # (address, muxed address, UDT, vec, map, tuple, option, val) cannot be
+        # used as an array key, so array_combine would fatal at runtime. Reject
+        # them at generation time, mirroring map_key_sort_comparator's guard.
+        if td.map.key_type.type not in (
+            xdr.SCSpecType.SC_SPEC_TYPE_U32,
+            xdr.SCSpecType.SC_SPEC_TYPE_I32,
+            xdr.SCSpecType.SC_SPEC_TYPE_U64,
+            xdr.SCSpecType.SC_SPEC_TYPE_I64,
+            xdr.SCSpecType.SC_SPEC_TYPE_TIMEPOINT,
+            xdr.SCSpecType.SC_SPEC_TYPE_DURATION,
+            xdr.SCSpecType.SC_SPEC_TYPE_BOOL,
+            xdr.SCSpecType.SC_SPEC_TYPE_U128,
+            xdr.SCSpecType.SC_SPEC_TYPE_I128,
+            xdr.SCSpecType.SC_SPEC_TYPE_U256,
+            xdr.SCSpecType.SC_SPEC_TYPE_I256,
+            xdr.SCSpecType.SC_SPEC_TYPE_STRING,
+            xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL,
+            xdr.SCSpecType.SC_SPEC_TYPE_BYTES,
+            xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N,
+        ):
+            raise NotImplementedError(
+                f"Map key type {td.map.key_type.type} is not supported: a PHP array "
+                f"cannot key by this type"
+            )
         key_conv = from_scval(td.map.key_type, "entry->key", class_name)
         val_conv = from_scval(td.map.value_type, "entry->val", class_name)
         return f"array_combine(array_map(fn($entry) => {key_conv}, ${name}->map), array_map(fn($entry) => {val_conv}, ${name}->map))"
@@ -275,7 +356,9 @@ def render_info():
 /**
  * This file was generated by stellar_contract_bindings v{stellar_contract_bindings_version}
  * and stellar_sdk v{stellar_sdk_version}.
- * 
+ *
+ * This code requires stellar-php-sdk (Soneso, soneso/stellar-php-sdk) v{MINIMUM_SDK_VERSION} or later.
+ *
  * @generated
  */
 """
@@ -346,7 +429,7 @@ def render_error_enum(entry: xdr.SCSpecUDTErrorEnumV0, class_name: str):
  * Generated error enum {{ type_name }}
 {%- endif %}
  */
-enum {{ type_name }}Error: int
+enum {{ type_name }}: int
 {
     {%- for case in entry.cases %}
     case {{ case.name.decode() }} = {{ case.value.uint32 }};
@@ -369,6 +452,9 @@ enum {{ type_name }}Error: int
 def render_struct(entry: xdr.SCSpecUDTStructV0, class_name: str):
     """Generate PHP class for struct."""
     type_name = prefixed_type_name(entry.name.decode(), class_name)
+    # Struct fields encode as SCV_MAP entries in spec field order, which the
+    # contract spec already provides sorted ascending by field name, so the map
+    # entries need no explicit sort (unlike map arguments).
     template = """
 /**
 {%- if entry.doc %}
@@ -519,7 +605,7 @@ class {{ type_name }}
     public function __construct(string $kind{% for case in entry.cases -%}
     {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_TUPLE_V0 -%}
     {%- if len(case.tuple_case.type) == 1 -%}
-    , ?{{ to_php_type(case.tuple_case.type[0], False, class_name) }} ${{ camel_to_snake(case.tuple_case.name.decode()) }} = null
+    , {{ to_php_type(case.tuple_case.type[0], True, class_name) }} ${{ camel_to_snake(case.tuple_case.name.decode()) }} = null
     {%- else -%}
     , ?array ${{ camel_to_snake(case.tuple_case.name.decode()) }} = null
     {%- endif -%}
@@ -712,12 +798,12 @@ class {{ contract_name }}
             {%- endfor %}
         ];
         
-        $result = $this->client->invokeMethod(
+        {% if parse_result_type(entry.outputs) != "void" %}$result = {% endif %}$this->client->invokeMethod(
             name: '{{ entry.name.sc_symbol.decode() }}',
             args: $args,
             methodOptions: $methodOptions
         );
-        {%- if len(entry.outputs) > 0 %}
+        {%- if parse_result_type(entry.outputs) != "void" %}
         return {{ parse_result_conversion(entry.outputs) }};
         {%- endif %}
     }
@@ -762,7 +848,7 @@ class {{ contract_name }}
         elif len(output) == 1:
             return to_php_type(output[0], False, contract_name)
         else:
-            return "array"
+            raise NotImplementedError("Tuple return type is not supported")
     
     def return_type_hint(output: List[xdr.SCSpecTypeDef]):
         result_type = parse_result_type(output)
@@ -778,8 +864,7 @@ class {{ contract_name }}
         elif len(output) == 1:
             return from_scval(output[0], "result", contract_name)
         else:
-            conversions = [from_scval(output[i], f"result[{i}]", contract_name) for i in range(len(output))]
-            return f"[{', '.join(conversions)}]"
+            raise NotImplementedError("Tuple return type is not supported")
     
     return Template(template).render(
         entries=entries,
@@ -827,8 +912,10 @@ def generate_binding(specs: List[xdr.SCSpecEntry], namespace: str = "GeneratedCo
     
     if function_specs:
         generated.append(render_client(function_specs, contract_name))
-    
-    return "\n".join(generated)
+
+    code = "\n".join(generated)
+    code = re.sub(r"[ \t]+$", "", code, flags=re.MULTILINE)
+    return code.rstrip("\n") + "\n"
 
 
 @click.command(name="php")
