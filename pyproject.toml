@@ -21,6 +21,7 @@ stellar-contract-bindings-java = "stellar_contract_bindings.cli:cli_java"
 stellar-contract-bindings-flutter = "stellar_contract_bindings.cli:cli_flutter"
 stellar-contract-bindings-php = "stellar_contract_bindings.cli:cli_php"
 stellar-contract-bindings-swift = "stellar_contract_bindings.cli:cli_swift"
+stellar-contract-bindings-kmp = "stellar_contract_bindings.cli:cli_kmp"
 
 [project.urls]
 Homepage = "https://github.com/lightsail-network/stellar-contract-bindings"
