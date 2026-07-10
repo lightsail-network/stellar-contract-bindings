@@ -6,6 +6,7 @@ from stellar_contract_bindings.java import command as java_command
 from stellar_contract_bindings.flutter import command as flutter_command
 from stellar_contract_bindings.php import command as php_command
 from stellar_contract_bindings.swift import command as swift_command
+from stellar_contract_bindings.kmp import command as kmp_command
 
 
 @click.group()
@@ -19,6 +20,7 @@ cli.add_command(java_command)
 cli.add_command(flutter_command)
 cli.add_command(php_command)
 cli.add_command(swift_command)
+cli.add_command(kmp_command)
 
 
 # https://github.com/lightsail-network/stellar-contract-bindings/issues/14
@@ -45,6 +47,11 @@ def cli_php():
 def cli_swift():
     """CLI for generating Stellar contract bindings (Swift)."""
     swift_command()
+
+
+def cli_kmp():
+    """CLI for generating Stellar contract bindings (Kotlin Multiplatform)."""
+    kmp_command()
 
 
 if __name__ == "__main__":

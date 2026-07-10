@@ -5,6 +5,7 @@ from stellar_contract_bindings.python import generate_binding as generate_python
 from stellar_contract_bindings.flutter import generate_binding as generate_flutter_binding
 from stellar_contract_bindings.php import generate_binding as generate_php_binding
 from stellar_contract_bindings.swift import generate_binding as generate_swift_binding
+from stellar_contract_bindings.kmp import generate_binding as generate_kmp_binding
 from stellar_contract_bindings.utils import get_specs_by_contract_id
 import black
 
@@ -24,13 +25,24 @@ required_fields = {
     "swift": {
         "class_name": {"label": "Class Name", "default": "Contract", "type": "text"}
     },
+    "kmp": {
+        "package": {
+            "label": "Package Name",
+            "default": "com.example.bindings",
+            "type": "text",
+        },
+        "class_name": {"label": "Class Name", "default": "Contract", "type": "text"},
+    },
 }
+
+# Display labels for languages whose title-cased name is not the desired label.
+language_labels = {"php": "PHP", "kmp": "KMP"}
 
 
 def generate_code(
     contract_id: str,
     rpc_url: str,
-    language: str = Literal["python", "java", "flutter", "php", "swift"],
+    language: str = Literal["python", "java", "flutter", "php", "swift", "kmp"],
     extra_fields: dict = None,
 ) -> str:
 
@@ -57,6 +69,11 @@ def generate_code(
     elif language == "swift":
         class_name = extra_fields.get("class_name", "Contract")
         code = generate_swift_binding(specs, class_name)
+        return code
+    elif language == "kmp":
+        package = extra_fields.get("package", "com.example.bindings")
+        class_name = extra_fields.get("class_name", "Contract")
+        code = generate_kmp_binding(specs, package, class_name)
         return code
     else:
         return "Unsupported language selected."
@@ -198,7 +215,7 @@ def index():
             <label for="language">Programming Language:</label>
             <select id="language" name="language" onchange="toggleLanguageSpecificFields()">
                 {% for lang in required_fields.keys() %}
-                <option value="{{ lang }}" {% if language == lang %}selected{% endif %}>{{ lang|capitalize }}</option>
+                <option value="{{ lang }}" {% if language == lang %}selected{% endif %}>{{ language_labels.get(lang, lang|capitalize) }}</option>
                 {% endfor %}
             </select>
         </div>
@@ -271,6 +288,7 @@ def index():
         rpc_url=rpc_url,
         language=language,
         required_fields=required_fields,
+        language_labels=language_labels,
         field_values=field_values,
         generated_code=generated_code,
     )

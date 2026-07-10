@@ -4,7 +4,7 @@
 
 This tool simplifies the process of interacting with Soroban contracts by generating the necessary code to call contract
 methods directly from your preferred programming language. Currently, it supports
-Python, Java, Flutter/Dart, PHP, and Swift/iOS. [stellar-cli](https://github.com/stellar/stellar-cli) provides support for TypeScript and Rust.
+Python, Java, Flutter/Dart, PHP, Swift/iOS, and Kotlin Multiplatform. [stellar-cli](https://github.com/stellar/stellar-cli) provides support for TypeScript and Rust.
 
 ## Web Interface
 We have a web interface for generating bindings. You can access via [https://stellar-contract-bindings.fly.dev/](https://stellar-contract-bindings.fly.dev/).
@@ -50,6 +50,11 @@ stellar-contract-bindings php --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRV
 #### Swift/iOS
 ```shell
 stellar-contract-bindings swift --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF --rpc-url https://mainnet.sorobanrpc.com --output ./Sources --class-name MyContract
+```
+
+#### Kotlin Multiplatform
+```shell
+stellar-contract-bindings kmp --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF --rpc-url https://mainnet.sorobanrpc.com --output ./src/commonMain/kotlin --package com.example.bindings --class-name MyContract
 ```
 
 These commands will generate language-specific bindings for the specified contract and save them in the respective directories.
@@ -197,6 +202,42 @@ Task {
     } catch {
         print("Error calling contract: \(error)")
     }
+}
+```
+
+#### Kotlin Multiplatform
+```kotlin
+import com.soneso.stellar.sdk.KeyPair
+import com.soneso.stellar.sdk.Network
+import com.example.bindings.MyContract // Import the generated bindings
+
+suspend fun example() {
+    val sourceKeyPair = KeyPair.fromAccountId("GD5KKP3LHUDXLDCGKP55NLEOEHMS3Z4BS6IDDZFCYU3BDXUZTBWL7JNF")
+    // or: val sourceKeyPair = KeyPair.fromSecretSeed("S...")
+
+    // Create a client instance (no network round-trip; the binding encodes and decodes
+    // arguments directly, so the contract spec is not fetched)
+    val client = MyContract.forContract(
+        contractId = "CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF",
+        rpcUrl = "https://mainnet.sorobanrpc.com",
+        network = Network.PUBLIC,
+    )
+
+    // Call a contract method directly (read-only calls pass signer = null)
+    val result = client.hello(
+        to = "World",
+        source = sourceKeyPair.getAccountId(),
+        signer = null,
+    )
+    println("Contract response: $result")
+
+    // Or build an assembled transaction for more control before signing and submitting
+    val assembledTx = client.buildHelloTx(
+        to = "World",
+        source = sourceKeyPair.getAccountId(),
+        signer = sourceKeyPair,
+    )
+    assembledTx.signAndSubmit(sourceKeyPair)
 }
 ```
 
