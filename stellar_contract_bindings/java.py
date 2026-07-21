@@ -745,12 +745,9 @@ def command(contract_id: str, rpc_url: str, output: str, package: str):
 
 
 if __name__ == "__main__":
-    from stellar_contract_bindings.metadata import parse_contract_metadata
+    from stellar_contract_bindings.utils import get_specs_by_wasm_file
 
     wasm_file = "/Users/overcat/repo/lightsail/stellar-contract-bindings/tests/contracts/target/wasm32-unknown-unknown/release/python.wasm"
-    with open(wasm_file, "rb") as f:
-        wasm = f.read()
-
-    specs = parse_contract_metadata(wasm).spec
+    specs = get_specs_by_wasm_file(wasm_file)
     generated = generate_binding(specs, package="org.stellar.sdk")
     print(generated)

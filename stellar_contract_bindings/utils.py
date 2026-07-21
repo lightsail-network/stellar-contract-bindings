@@ -1,10 +1,8 @@
 from stellar_sdk import SorobanServer
 from stellar_sdk import xdr, Address
+from stellar_sdk.sep.contract_spec import ContractSpec
 
-from stellar_contract_bindings.metadata import (
-    parse_contract_metadata,
-    get_token_sc_spec_entry,
-)
+from stellar_contract_bindings.metadata import get_token_sc_spec_entry
 
 
 def get_specs_by_wasm_bytes(wasm: bytes) -> list[xdr.SCSpecEntry]:
@@ -13,8 +11,7 @@ def get_specs_by_wasm_bytes(wasm: bytes) -> list[xdr.SCSpecEntry]:
     :param wasm: The wasm bytes.
     :return: The contract specs.
     """
-    meta_data = parse_contract_metadata(wasm)
-    return meta_data.spec
+    return list(ContractSpec.from_wasm(wasm).entries)
 
 
 def get_specs_by_wasm_file(wasm_file_path: str) -> list[xdr.SCSpecEntry]:
@@ -23,9 +20,7 @@ def get_specs_by_wasm_file(wasm_file_path: str) -> list[xdr.SCSpecEntry]:
     :param wasm_file_path: The wasm file path.
     :return: The contract specs.
     """
-    with open(wasm_file_path, "rb") as f:
-        wasm = f.read()
-    return get_specs_by_wasm_bytes(wasm)
+    return list(ContractSpec.from_wasm_file(wasm_file_path).entries)
 
 
 def get_specs_by_wasm_hash(wasm_hash: bytes, rpc_url: str) -> list[xdr.SCSpecEntry]:
