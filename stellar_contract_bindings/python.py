@@ -135,6 +135,18 @@ def camel_to_snake(text: str) -> str:
     return result
 
 
+def python_docstring(doc: bytes) -> str:
+    """Render spec doc text as a Python string literal.
+
+    Docs come from the contract spec, so a contract can publish text that
+    closes a docstring and continues with statements of its own, which then
+    run when the generated module is imported. repr() always produces a
+    literal that evaluates back to the original text, so nothing in the doc
+    can escape it.
+    """
+    return repr(doc.decode())
+
+
 def _default_udt_name(spec_name: str) -> str:
     segments = [segment for segment in spec_name.split("::") if segment]
     return python_identifier(segments[-1] if segments else spec_name)
@@ -421,7 +433,7 @@ def render_enum(entry: xdr.SCSpecUDTEnumV0, class_name: str | None = None):
     template = """
 class {{ class_name }}(IntEnum):
     {%- if entry.doc %}
-    '''{{ entry.doc.decode() }}'''
+    __doc__ = {{ python_docstring(entry.doc) }}
     {%- endif %}
     {%- for case in entry.cases %}
     {{ case.name.decode() }} = {{ case.value.uint32 }}
@@ -434,7 +446,9 @@ class {{ class_name }}(IntEnum):
         return cls(scval.from_uint32(val))
 """
 
-    rendered_code = Template(template).render(entry=entry, class_name=class_name)
+    rendered_code = Template(template).render(
+        entry=entry, class_name=class_name, python_docstring=python_docstring
+    )
     return rendered_code
 
 
@@ -443,7 +457,7 @@ def render_error_enum(entry: xdr.SCSpecUDTErrorEnumV0, class_name: str | None = 
     template = """
 class {{ class_name }}(IntEnum):
     {%- if entry.doc %}
-    '''{{ entry.doc.decode() }}'''
+    __doc__ = {{ python_docstring(entry.doc) }}
     {%- endif %}
     {%- for case in entry.cases %}
     {{ case.name.decode() }} = {{ case.value.uint32 }}
@@ -465,7 +479,9 @@ class {{ class_name }}(IntEnum):
         return cls(error.contract_code.uint32)
     """
 
-    rendered_code = Template(template).render(entry=entry, class_name=class_name)
+    rendered_code = Template(template).render(
+        entry=entry, class_name=class_name, python_docstring=python_docstring
+    )
     return rendered_code
 
 
@@ -478,7 +494,7 @@ def render_struct(
     template = """
 class {{ class_name }}:
     {%- if entry.doc %}
-    '''{{ entry.doc.decode() }}'''
+    __doc__ = {{ python_docstring(entry.doc) }}
     {%- endif %}
     {%- for field in entry.fields %}
     {{ field.name.decode() }}: {{ to_py_type(field.type) }}
@@ -523,6 +539,7 @@ class {{ class_name }}:
         to_scval=lambda td, name: to_scval(td, name, resolve_udt_name),
         from_scval=lambda td, name: from_scval(td, name, resolve_udt_name),
         enumerate=enumerate,
+        python_docstring=python_docstring,
     )
     return rendered_code
 
@@ -536,7 +553,7 @@ def render_tuple_struct(
     template = """
 class {{ class_name }}:
     {%- if entry.doc %}
-    '''{{ entry.doc.decode() }}'''
+    __doc__ = {{ python_docstring(entry.doc) }}
     {%- endif %}
 
     def __init__(self, value: Tuple[{% for f in entry.fields %}{{ to_py_type(f.type, True) }}{% if not loop.last %}, {% endif %}{% endfor %}]):
@@ -568,6 +585,7 @@ class {{ class_name }}:
         ),
         to_scval=lambda td, name: to_scval(td, name, resolve_udt_name),
         from_scval=lambda td, name: from_scval(td, name, resolve_udt_name),
+        python_docstring=python_docstring,
     )
     return rendered_code
 
@@ -596,7 +614,7 @@ class {{ class_name }}Kind(Enum):
     template = """
 class {{ class_name }}:
     {%- if entry.doc %}
-    '''{{ entry.doc.decode() }}'''
+    __doc__ = {{ python_docstring(entry.doc) }}
     {%- endif %}
     def __init__(self,
         kind: {{ class_name }}Kind,
@@ -699,6 +717,7 @@ class {{ class_name }}:
         len=len,
         camel_to_snake=camel_to_snake,
         enumerate=enumerate,
+        python_docstring=python_docstring,
     )
     return kind_enum_rendered_code + "\n" + union_rendered_code
 
@@ -1225,7 +1244,7 @@ class Client(ContractClient):
     {%- for entry in entries %}
     def {{ entry.name.sc_symbol.decode() }}(self, {% for param in entry.inputs %}{{ param.name.decode() }}: {{ to_py_type(param.type, True) }}, {% endfor %} source: Union[str, MuxedAccount] = NULL_ACCOUNT, signer: Optional[Keypair] = None, base_fee: int = 100, transaction_timeout: int = 300, submit_timeout: int = 30, simulate: bool = True, restore: bool = True) -> AssembledTransaction[{{ parse_result_type(entry.outputs) }}]:
         {%- if entry.doc %}
-        """{{ entry.doc.decode() }}"""
+        {{ python_docstring(entry.doc) }}
         {%- endif %}
         return self.invoke('{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}', [{% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}], parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
     {%- else %}
@@ -1238,7 +1257,7 @@ class ClientAsync(ContractClientAsync):
     {%- for entry in entries %}
     async def {{ entry.name.sc_symbol.decode() }}(self, {% for param in entry.inputs %}{{ param.name.decode() }}: {{ to_py_type(param.type, True) }}, {% endfor %} source: Union[str, MuxedAccount] = NULL_ACCOUNT, signer: Optional[Keypair] = None, base_fee: int = 100, transaction_timeout: int = 300, submit_timeout: int = 30, simulate: bool = True, restore: bool = True) -> AssembledTransactionAsync[{{ parse_result_type(entry.outputs) }}]:
         {%- if entry.doc %}
-        """{{ entry.doc.decode() }}"""
+        {{ python_docstring(entry.doc) }}
         {%- endif %}
         return await self.invoke('{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}', [{% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}], parse_result_xdr_fn={{ parse_result_xdr_fn(entry.outputs) }}, source = source, signer = signer, base_fee = base_fee, transaction_timeout = transaction_timeout, submit_timeout = submit_timeout, simulate = simulate, restore = restore)
     {%- else %}
@@ -1289,6 +1308,7 @@ class ClientAsync(ContractClientAsync):
         parse_result_type=parse_result_type,
         parse_result_xdr_fn=parse_result_xdr_fn,
         client_type=client_type,
+        python_docstring=python_docstring,
     )
     return client_rendered_code
 
