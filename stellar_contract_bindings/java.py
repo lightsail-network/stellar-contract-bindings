@@ -140,8 +140,6 @@ def to_java_type(td: xdr.SCSpecTypeDef, input_type: bool = False):
         return "String"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         return "Address"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
-        raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return to_java_type(td.option.value_type, input_type)
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
@@ -158,7 +156,7 @@ def to_java_type(td: xdr.SCSpecTypeDef, input_type: bool = False):
         types = [to_java_type(t, input_type) for t in td.tuple.value_types]
         return f"{get_tuple_class_name(len(types))}<{', '.join(types)}>"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
-        return f"byte[]"
+        return "byte[]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
         return td.udt.name.decode()
     raise ValueError(f"Unsupported SCValType: {t}")
@@ -171,7 +169,7 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str):
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BOOL:
         return f"Scv.toBoolean({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:
-        return f"Scv.toVoid()"
+        return "Scv.toVoid()"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ERROR:
         raise NotImplementedError("SC_SPEC_TYPE_ERROR is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_U32:
@@ -202,8 +200,6 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str):
         return f"Scv.toSymbol({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         return f"Scv.toAddress({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
-        raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return f"{name} == null ? Scv.toVoid() : {to_scval(td.option.value_type, name)}"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
@@ -264,8 +260,6 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str):
         return f"Scv.fromSymbol({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
         return f"Scv.fromAddress({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
-        raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return f"{name}.getDiscriminant() != SCValType.SCV_VOID ? {from_scval(td.option.value_type, name)} : null"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:

@@ -197,8 +197,6 @@ def to_py_type(
         or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS
     ):
         return "Union[Address, str]" if input_type else "Address"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
-        raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return f"Optional[{to_py_type(td.option.value_type, input_type, resolve_udt_name)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
@@ -221,7 +219,7 @@ def to_py_type(
         ]
         return f"Tuple[{', '.join(types)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
-        return f"bytes"
+        return "bytes"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
         return resolve_udt_name(td.udt.name.decode())
     raise ValueError(f"Unsupported SCValType: {t}")
@@ -238,7 +236,7 @@ def to_scval(
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BOOL:
         return f"scval.to_bool({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:
-        return f"scval.to_void()"
+        return "scval.to_void()"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ERROR:
         return f"xdr.SCVal(xdr.SCValType.SCV_ERROR, error={name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_U32:
@@ -272,8 +270,6 @@ def to_scval(
         or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS
     ):
         return f"scval.to_address({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
-        raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return f"{to_scval(td.option.value_type, name, resolve_udt_name)} if {name} is not None else scval.to_void()"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
@@ -352,8 +348,6 @@ def from_scval(
         or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS
     ):
         return f"scval.from_address({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS:
-        raise NotImplementedError("SC_SPEC_TYPE_MUXED_ADDRESS is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return f"{from_scval(td.option.value_type, name, resolve_udt_name)} if {name}.type != xdr.SCValType.SCV_VOID else scval.from_void({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
