@@ -81,12 +81,3 @@ def get_specs_by_contract_id(contract_id: str, rpc_url: str) -> list[xdr.SCSpecE
             raise ValueError(
                 f"Unknown executable type, type: {data.contract_data.val.instance.executable.type}"
             )
-
-
-if __name__ == "__main__":
-    specs = get_specs_by_contract_id(
-        "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-        "https://mainnet.sorobanrpc.com",
-    )
-    for spec in specs:
-        print(spec)
