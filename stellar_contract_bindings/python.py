@@ -584,7 +584,7 @@ class {{ class_name }}Kind(Enum):
     {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0 %}
     {{ case.void_case.name.decode() }} = '{{ case.void_case.name_r.decode() if case.void_case.name_r else case.void_case.name.decode() }}'
     {%- else %}
-    {{ case.tuple_case.name.decode() }} = '{{ case.tuple_case.name.decode() if case.tuple_case.name_r else case.tuple_case.name.decode() }}'
+    {{ case.tuple_case.name.decode() }} = '{{ case.tuple_case.name_r.decode() if case.tuple_case.name_r else case.tuple_case.name.decode() }}'
     {%- endif %}
     {%- endfor %}
 """
@@ -621,15 +621,15 @@ class {{ class_name }}:
         {%- for case in entry.cases %}
         {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0 %}
         if self.kind == {{ class_name }}Kind.{{ case.void_case.name.decode() }}:
-            return scval.to_enum(self.kind.name, None)
+            return scval.to_enum(self.kind.value, None)
         {%- else %}
         if self.kind == {{ class_name }}Kind.{{ case.tuple_case.name.decode() }}:
         {%- if len(case.tuple_case.type) == 1 %}
             assert self.{{ camel_to_snake(case.tuple_case.name.decode()) }} is not None
-            return scval.to_enum(self.kind.name, {{ to_scval(case.tuple_case.type[0], 'self.' ~ camel_to_snake(case.tuple_case.name.decode())) }})
+            return scval.to_enum(self.kind.value, {{ to_scval(case.tuple_case.type[0], 'self.' ~ camel_to_snake(case.tuple_case.name.decode())) }})
         {%- else %}
             assert isinstance(self.{{ camel_to_snake(case.tuple_case.name.decode()) }}, tuple)
-            return scval.to_enum(self.kind.name, [
+            return scval.to_enum(self.kind.value, [
                 {%- for t in case.tuple_case.type %}
                 {{ to_scval(t, 'self.' + camel_to_snake(case.tuple_case.name.decode()) + '[' + loop.index0|string + ']') }}{% if not loop.last %},{% endif %}
                 {%- endfor %}

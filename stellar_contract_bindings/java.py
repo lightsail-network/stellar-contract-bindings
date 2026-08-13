@@ -528,7 +528,7 @@ public static class {{ entry.name.decode() }} {
         {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0 %}
         {{ case.void_case.name.decode() }}("{{ case.void_case.name_r.decode() if case.void_case.name_r else case.void_case.name.decode() }}"){% if loop.last %};{% else %},{% endif %}
         {%- else %}
-        {{ case.tuple_case.name.decode() }}("{{ case.tuple_case.name.decode() if case.tuple_case.name_r else case.tuple_case.name.decode() }}"){% if loop.last %};{% else %},{% endif %}
+        {{ case.tuple_case.name.decode() }}("{{ case.tuple_case.name_r.decode() if case.tuple_case.name_r else case.tuple_case.name.decode() }}"){% if loop.last %};{% else %},{% endif %}
         {%- endif %}
         {%- endfor %}
 
