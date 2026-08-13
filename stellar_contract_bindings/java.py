@@ -207,7 +207,9 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str):
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return f"{name} == null ? Scv.toVoid() : {to_scval(td.option.value_type, name)}"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
-        return NotImplementedError("SC_SPEC_TYPE_RESULT is not supported")
+        # to_java_type() and from_scval() both reduce Result<T, E> to its Ok
+        # arm, so the Java value in hand is already a T and encodes as one.
+        return to_scval(td.result.ok_type, name)
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
         return f"Scv.toVec({name}.stream().map(e -> {to_scval(td.vec.element_type, 'e')}).collect(Collectors.toList()))"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
@@ -228,7 +230,10 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str):
     if t == xdr.SCSpecType.SC_SPEC_TYPE_BOOL:
         return f"Scv.fromBoolean({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:
-        return f"Scv.fromVoid()"
+        # Scv.fromVoid is `void fromVoid(SCVal)`, so it cannot be used where a
+        # value is expected. to_java_type() maps void to Void, whose only value
+        # is null - the same thing the empty-tuple branch below emits.
+        return "null"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ERROR:
         raise NotImplementedError("SC_SPEC_TYPE_ERROR is not supported")
     if t == xdr.SCSpecType.SC_SPEC_TYPE_U32:
