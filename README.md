@@ -79,6 +79,11 @@ print(assembled_tx.result())
 # assembled_tx.sign_and_submit()
 ```
 
+If the contract declares events in its SEP-48 spec (supported since Protocol
+23), the generated Python bindings also include a typed class per event, a
+`topic_filter()` builder for `getEvents`, and a `parse_event` dispatcher that
+accepts `xdr.ContractEvent`, RPC `EventInfo`, or raw `(topics, data)` values.
+
 #### Java
 ```java
 public class Example extends ContractClient {
