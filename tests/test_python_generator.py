@@ -1,6 +1,10 @@
 """Tests for the Python binding generator (non-event specs)."""
 
+import ast
+import inspect
+
 import black
+import pytest
 from stellar_sdk import scval, xdr
 
 from stellar_contract_bindings.python import (
@@ -9,6 +13,7 @@ from stellar_contract_bindings.python import (
     _SCVAL_CODECS,
     from_scval,
     generate_binding,
+    python_docstring,
     to_py_type,
     to_scval,
 )
@@ -95,7 +100,35 @@ class TestUnionKeywordCaseNames:
 # Spec docs are attacker-controlled: they arrive in the contract's spec from
 # the chain. Interpolating them into a docstring literal let a contract close
 # the literal and have the rest of its "doc" run as code on import.
+#
+# Both payloads below are needed. The generator quotes with double quotes, so
+# the single-quoted payload is inert as text and rides the readable path; only
+# the double-quoted one forces the repr() fallback.
 INJECTION_DOC = b"x'''\n    import os\n    PWNED = os.getcwd()\n    _ = '''"
+DQUOTE_INJECTION_DOC = b'x"""\nimport os\nPWNED = os.getcwd()\n_ = """'
+INJECTION_DOCS = [INJECTION_DOC, DQUOTE_INJECTION_DOC]
+
+# Text a triple-quoted literal carries unchanged, so it stays readable.
+QUOTABLE_DOCS = [
+    b"plain",
+    b"first line\n\nthird line",
+    b"tab\there",
+    b'apostrophes and "quotes" inside',
+    "emoji \U0001f48e".encode(),
+    INJECTION_DOC,
+]
+
+# Text that would mean something else inside a triple-quoted literal, or make
+# the generated module warn on import, so it has to fall back to repr().
+UNQUOTABLE_DOCS = [
+    DQUOTE_INJECTION_DOC,
+    b'ends with a quote "',
+    b"trailing backslash \\",
+    b"a\\nb",  # a literal backslash-n, which must not become a newline
+    b"carriage\r\nreturn",
+    b'implicit """ """ concatenation',
+    b"\x00nul",
+]
 
 
 def _enum(name: bytes, doc: bytes) -> xdr.SCSpecEntry:
@@ -150,50 +183,111 @@ def _function(name: bytes, doc: bytes) -> xdr.SCSpecEntry:
     )
 
 
+class TestDocLiterals:
+    """python_docstring() renders any doc text as exactly one string constant.
+
+    That is the whole safety property: whatever the contract publishes ends up
+    as a value, never as syntax. Readability is a second concern, handled by
+    picking the triple-quoted form whenever it holds the text unchanged.
+    """
+
+    @pytest.mark.parametrize("doc", QUOTABLE_DOCS + UNQUOTABLE_DOCS + [b""])
+    def test_renders_one_constant_holding_the_original_text(self, doc):
+        node = ast.parse(python_docstring(doc), mode="eval").body
+        assert isinstance(node, ast.Constant)
+        assert node.value == doc.decode()
+
+    @pytest.mark.parametrize("doc", QUOTABLE_DOCS)
+    def test_quotable_docs_keep_their_line_breaks(self, doc):
+        rendered = python_docstring(doc)
+        assert rendered == '"""' + doc.decode() + '"""'
+
+    @pytest.mark.parametrize("doc", UNQUOTABLE_DOCS)
+    def test_unquotable_docs_fall_back_to_repr(self, doc):
+        assert python_docstring(doc) == repr(doc.decode())
+
+    def test_a_normal_doc_is_not_escaped_into_one_line(self):
+        """Guards the readability the fallback costs, so it stays the exception."""
+        assert python_docstring(b"first line\nsecond line") == (
+            '"""first line\nsecond line"""'
+        )
+
+
 class TestHostileSpecDocs:
     """A contract's doc text cannot alter the generated program."""
 
-    def setup_method(self):
-        self.specs = [
-            _enum(b"HEnum", INJECTION_DOC),
-            _error_enum(b"HError", INJECTION_DOC),
-            _struct(b"HStruct", INJECTION_DOC, [b"v"]),
-            _struct(b"HTuple", INJECTION_DOC, [b"0"]),
+    @staticmethod
+    def _bindings(doc: bytes) -> tuple[list, dict]:
+        specs = [
+            _enum(b"HEnum", doc),
+            _error_enum(b"HError", doc),
+            _struct(b"HStruct", doc, [b"v"]),
+            _struct(b"HTuple", doc, [b"0"]),
             _union(b"HUnion", [_void_case(b"a")]),
         ]
-        self.specs[-1].udt_union_v0.doc = INJECTION_DOC
-        self.ns = _load_bindings(self.specs)
+        specs[-1].udt_union_v0.doc = doc
+        return specs, _load_bindings(specs)
 
-    def test_nothing_from_the_doc_executes(self):
-        assert "PWNED" not in self.ns
-        assert "os" not in self.ns
+    @pytest.mark.parametrize("doc", INJECTION_DOCS)
+    def test_nothing_from_the_doc_executes(self, doc):
+        _, ns = self._bindings(doc)
+        assert "PWNED" not in ns
+        assert "os" not in ns
 
-    def test_doc_is_preserved_verbatim_on_every_udt(self):
+    @pytest.mark.parametrize("doc", INJECTION_DOCS)
+    def test_doc_is_preserved_verbatim_on_every_udt(self, doc):
+        _, ns = self._bindings(doc)
         for name in ("HEnum", "HError", "HStruct", "HTuple", "HUnion"):
-            assert self.ns[name].__doc__ == INJECTION_DOC.decode()
-            assert not hasattr(self.ns[name], "PWNED")
+            assert ns[name].__doc__ == doc.decode()
+            assert not hasattr(ns[name], "PWNED")
 
-    def test_generated_source_never_opens_a_docstring_literal(self):
-        source = generate_binding(self.specs, client_type="none")
-        assert "'''x'''" not in source
-        assert "PWNED = os.getcwd()\n" not in source
+    @pytest.mark.parametrize("doc", INJECTION_DOCS)
+    def test_the_payload_survives_only_inside_a_string(self, doc):
+        """The text may appear in the source; it must never become syntax.
 
-    def test_client_method_docs_are_inert(self):
-        """Method docs stay docstrings, so the payload survives only as text.
+        Checked against the parsed module rather than the text, so it holds for
+        both the triple-quoted and the repr() rendering: the doc has to show up
+        as a constant, and nothing it names may exist as code.
+        """
+        tree = ast.parse(generate_binding([_function(b"hello", doc)], "both"))
+        constants = {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        assert doc.decode() in constants
+        assert not [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and node.id == "PWNED"
+        ]
+        imported = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for alias in node.names
+        }
+        assert "os" not in imported
 
-        black re-indents docstrings, so the text is compared loosely here;
-        what matters is that none of it ran.
+    @pytest.mark.parametrize("doc", INJECTION_DOCS)
+    def test_client_method_docs_are_inert(self, doc):
+        """Method docs sit in docstring position, where black reindents them.
+
+        So unlike the class ``__doc__`` assignments above, the stored text is
+        the doc with its common indent stripped - which is what a reader gets
+        back out of ``help()`` either way. None of it runs.
         """
         for client_type, classes in (
             ("sync", ["Client"]),
             ("async", ["ClientAsync"]),
             ("both", ["Client", "ClientAsync"]),
         ):
-            ns = _load_bindings([_function(b"hello", INJECTION_DOC)], client_type)
+            ns = _load_bindings([_function(b"hello", doc)], client_type)
             assert "PWNED" not in ns
             for name in classes:
                 assert not hasattr(ns[name], "PWNED")
-                assert "PWNED = os.getcwd()" in ns[name].hello.__doc__
+                got = inspect.getdoc(ns[name].hello)
+                assert got == inspect.cleandoc(doc.decode())
 
 
 class TestTypeMappingTables:

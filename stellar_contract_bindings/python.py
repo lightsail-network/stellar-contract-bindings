@@ -1,3 +1,4 @@
+import ast
 import builtins
 import keyword
 import os
@@ -140,11 +141,26 @@ def python_docstring(doc: bytes) -> str:
 
     Docs come from the contract spec, so a contract can publish text that
     closes a docstring and continues with statements of its own, which then
-    run when the generated module is imported. repr() always produces a
-    literal that evaluates back to the original text, so nothing in the doc
-    can escape it.
+    run when the generated module is imported.
+
+    A triple-quoted literal keeps the doc readable in the generated source,
+    but only holds if the text cannot break out of it. Rather than guess at
+    which characters are dangerous, build the literal and parse it back:
+    literal_eval accepts nothing but a literal, so text that escapes either
+    fails to parse or evaluates to something other than what went in. repr()
+    handles whatever is left over - always safe, never pretty.
     """
-    return repr(doc.decode())
+    text = doc.decode()
+    # A backslash that begins no known escape is kept verbatim, so it would
+    # survive the round trip while making the generated module warn on import.
+    if "\\" not in text:
+        literal = f'"""{text}"""'
+        try:
+            if ast.literal_eval(literal) == text:
+                return literal
+        except (SyntaxError, ValueError):
+            pass
+    return repr(text)
 
 
 def _default_udt_name(spec_name: str) -> str:
