@@ -3,7 +3,15 @@
 import black
 from stellar_sdk import scval, xdr
 
-from stellar_contract_bindings.python import generate_binding
+from stellar_contract_bindings.python import (
+    _ADDRESS_TYPES,
+    _PY_TYPES,
+    _SCVAL_CODECS,
+    from_scval,
+    generate_binding,
+    to_py_type,
+    to_scval,
+)
 
 
 def _type(t: xdr.SCSpecType) -> xdr.SCSpecTypeDef:
@@ -186,3 +194,58 @@ class TestHostileSpecDocs:
             for name in classes:
                 assert not hasattr(ns[name], "PWNED")
                 assert "PWNED = os.getcwd()" in ns[name].hello.__doc__
+
+
+class TestTypeMappingTables:
+    """Guards for the lookup tables the three type functions are built on."""
+
+    def test_every_spec_type_is_handled(self):
+        """No SCSpecType falls through to the trailing raise.
+
+        A gap here would only surface as a generation failure against some
+        contract in the wild, so check the whole enum up front.
+        """
+        unhandled = []
+        for spec_type in xdr.SCSpecType:
+            td = _type(spec_type)
+            for fn, args in (
+                (to_py_type, ()),
+                (to_scval, ("v",)),
+                (from_scval, ("v",)),
+            ):
+                try:
+                    fn(td, *args)
+                except (ValueError, NotImplementedError):
+                    unhandled.append((spec_type.name, fn.__name__))
+                except AttributeError:
+                    pass  # composite type, needs a payload the bare def lacks
+        assert unhandled == []
+
+    def test_codec_names_exist_in_both_directions(self):
+        """_SCVAL_CODECS assumes scval.to_<x> and scval.from_<x> both exist.
+
+        That symmetry is what lets one table drive both directions; if the SDK
+        ever renames one side, generated bindings would call a helper that is
+        not there.
+        """
+        missing = [
+            f"scval.{direction}{codec}"
+            for codec in sorted(set(_SCVAL_CODECS.values()))
+            for direction in ("to_", "from_")
+            if not hasattr(scval, f"{direction}{codec}")
+        ]
+        assert missing == []
+
+    def test_tables_do_not_overlap_the_special_cases(self):
+        """Types handled explicitly must not also sit in a table.
+
+        Both functions check their special cases before the table, so an
+        overlap would be silently shadowed rather than reported.
+        """
+        special = {
+            xdr.SCSpecType.SC_SPEC_TYPE_VAL,
+            xdr.SCSpecType.SC_SPEC_TYPE_VOID,
+            xdr.SCSpecType.SC_SPEC_TYPE_ERROR,
+        }
+        assert special & set(_SCVAL_CODECS) == set()
+        assert set(_ADDRESS_TYPES) & set(_PY_TYPES) == set()
