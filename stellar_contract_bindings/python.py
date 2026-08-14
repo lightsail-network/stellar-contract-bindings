@@ -8,7 +8,7 @@ from typing import Callable, List, Tuple
 import black
 
 import click
-from jinja2 import Template
+from jinja2 import Environment, Template
 from stellar_sdk import __version__ as stellar_sdk_version, StrKey
 from stellar_sdk import xdr
 
@@ -152,74 +152,102 @@ def _default_udt_name(spec_name: str) -> str:
     return python_identifier(segments[-1] if segments else spec_name)
 
 
+# Templates are compiled once at import rather than on every render call, and
+# the names every template reaches for live on the environment instead of being
+# repeated in each render() call. The default Undefined is deliberate: the
+# templates test optional spec attributes such as ``field.name_r``, which
+# StrictUndefined would turn into an error rather than a falsy value.
+_ENV = Environment()
+_ENV.globals.update(
+    camel_to_snake=camel_to_snake,
+    enumerate=enumerate,
+    len=len,
+    python_docstring=python_docstring,
+    xdr=xdr,
+)
+
+
+def _template(source: str) -> Template:
+    return _ENV.from_string(source)
+
+
+# Scalar SCSpecTypes whose scval helpers are named symmetrically, so that
+# to_scval emits scval.to_<codec> and from_scval emits scval.from_<codec>.
+_SCVAL_CODECS = {
+    xdr.SCSpecType.SC_SPEC_TYPE_BOOL: "bool",
+    xdr.SCSpecType.SC_SPEC_TYPE_U32: "uint32",
+    xdr.SCSpecType.SC_SPEC_TYPE_I32: "int32",
+    xdr.SCSpecType.SC_SPEC_TYPE_U64: "uint64",
+    xdr.SCSpecType.SC_SPEC_TYPE_I64: "int64",
+    xdr.SCSpecType.SC_SPEC_TYPE_TIMEPOINT: "timepoint",
+    xdr.SCSpecType.SC_SPEC_TYPE_DURATION: "duration",
+    xdr.SCSpecType.SC_SPEC_TYPE_U128: "uint128",
+    xdr.SCSpecType.SC_SPEC_TYPE_I128: "int128",
+    xdr.SCSpecType.SC_SPEC_TYPE_U256: "uint256",
+    xdr.SCSpecType.SC_SPEC_TYPE_I256: "int256",
+    xdr.SCSpecType.SC_SPEC_TYPE_BYTES: "bytes",
+    xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N: "bytes",
+    xdr.SCSpecType.SC_SPEC_TYPE_STRING: "string",
+    xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL: "symbol",
+    xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS: "address",
+    xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS: "address",
+}
+
+# Scalar SCSpecTypes that map to a fixed Python annotation. Address is absent
+# because its annotation widens for input positions.
+_PY_TYPES = {
+    xdr.SCSpecType.SC_SPEC_TYPE_VAL: "xdr.SCVal",
+    xdr.SCSpecType.SC_SPEC_TYPE_BOOL: "bool",
+    xdr.SCSpecType.SC_SPEC_TYPE_VOID: "None",
+    xdr.SCSpecType.SC_SPEC_TYPE_ERROR: "xdr.SCError",
+    xdr.SCSpecType.SC_SPEC_TYPE_U32: "int",
+    xdr.SCSpecType.SC_SPEC_TYPE_I32: "int",
+    xdr.SCSpecType.SC_SPEC_TYPE_U64: "int",
+    xdr.SCSpecType.SC_SPEC_TYPE_I64: "int",
+    xdr.SCSpecType.SC_SPEC_TYPE_TIMEPOINT: "int",
+    xdr.SCSpecType.SC_SPEC_TYPE_DURATION: "int",
+    xdr.SCSpecType.SC_SPEC_TYPE_U128: "int",
+    xdr.SCSpecType.SC_SPEC_TYPE_I128: "int",
+    xdr.SCSpecType.SC_SPEC_TYPE_U256: "int",
+    xdr.SCSpecType.SC_SPEC_TYPE_I256: "int",
+    xdr.SCSpecType.SC_SPEC_TYPE_BYTES: "bytes",
+    xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N: "bytes",
+    xdr.SCSpecType.SC_SPEC_TYPE_STRING: "bytes",
+    xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL: "str",
+}
+
+_ADDRESS_TYPES = (
+    xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS,
+    xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS,
+)
+
+
 def to_py_type(
     td: xdr.SCSpecTypeDef,
     input_type: bool = False,
     resolve_udt_name: UdtNameResolver = _default_udt_name,
 ):
+    def recur(inner: xdr.SCSpecTypeDef) -> str:
+        return to_py_type(inner, input_type, resolve_udt_name)
+
     t = td.type
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_VAL:
-        return "xdr.SCVal"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_BOOL:
-        return "bool"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:
-        return "None"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_ERROR:
-        return "xdr.SCError"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_U32:
-        return "int"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_I32:
-        return "int"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_U64:
-        return "int"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_I64:
-        return "int"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_TIMEPOINT:
-        return "int"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_DURATION:
-        return "int"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_U128:
-        return "int"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_I128:
-        return "int"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_U256:
-        return "int"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_I256:
-        return "int"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES:
-        return "bytes"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_STRING:
-        return "bytes"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL:
-        return "str"
-    if (
-        t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS
-        or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS
-    ):
+    if t in _PY_TYPES:
+        return _PY_TYPES[t]
+    if t in _ADDRESS_TYPES:
         return "Union[Address, str]" if input_type else "Address"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
-        return f"Optional[{to_py_type(td.option.value_type, input_type, resolve_udt_name)}]"
+        return f"Optional[{recur(td.option.value_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
-        ok_t = td.result.ok_type
-        error_t = td.result.error_type
-        return (
-            f"Union[{to_py_type(ok_t, input_type, resolve_udt_name)}, "
-            f"{to_py_type(error_t, input_type, resolve_udt_name)}]"
-        )
+        return f"Union[{recur(td.result.ok_type)}, {recur(td.result.error_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
-        return f"List[{to_py_type(td.vec.element_type, input_type, resolve_udt_name)}]"
+        return f"List[{recur(td.vec.element_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-        return f"Dict[{to_py_type(td.map.key_type, input_type, resolve_udt_name)}, {to_py_type(td.map.value_type, input_type, resolve_udt_name)}]"
+        return f"Dict[{recur(td.map.key_type)}, {recur(td.map.value_type)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
         if len(td.tuple.value_types) == 0:
             # () equivalent to None in Python
             return "None"
-        types = [
-            to_py_type(t, input_type, resolve_udt_name) for t in td.tuple.value_types
-        ]
-        return f"Tuple[{', '.join(types)}]"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
-        return "bytes"
+        return f"Tuple[{', '.join(recur(v) for v in td.tuple.value_types)}]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
         return resolve_udt_name(td.udt.name.decode())
     raise ValueError(f"Unsupported SCValType: {t}")
@@ -230,74 +258,43 @@ def to_scval(
     name: str,
     resolve_udt_name: UdtNameResolver = _default_udt_name,
 ):
+    def recur(inner: xdr.SCSpecTypeDef, inner_name: str) -> str:
+        return to_scval(inner, inner_name, resolve_udt_name)
+
     t = td.type
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VAL:
         return f"{name}"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_BOOL:
-        return f"scval.to_bool({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:
         return "scval.to_void()"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ERROR:
         return f"xdr.SCVal(xdr.SCValType.SCV_ERROR, error={name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_U32:
-        return f"scval.to_uint32({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_I32:
-        return f"scval.to_int32({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_U64:
-        return f"scval.to_uint64({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_I64:
-        return f"scval.to_int64({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_TIMEPOINT:
-        return f"scval.to_timepoint({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_DURATION:
-        return f"scval.to_duration({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_U128:
-        return f"scval.to_uint128({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_I128:
-        return f"scval.to_int128({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_U256:
-        return f"scval.to_uint256({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_I256:
-        return f"scval.to_int256({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES:
-        return f"scval.to_bytes({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_STRING:
-        return f"scval.to_string({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL:
-        return f"scval.to_symbol({name})"
-    if (
-        t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS
-        or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS
-    ):
-        return f"scval.to_address({name})"
+    if t in _SCVAL_CODECS:
+        return f"scval.to_{_SCVAL_CODECS[t]}({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
-        return f"{to_scval(td.option.value_type, name, resolve_udt_name)} if {name} is not None else scval.to_void()"
+        return f"{recur(td.option.value_type, name)} if {name} is not None else scval.to_void()"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
         error_t = td.result.error_type
-        error_py_type = to_py_type(
-            error_t, input_type=True, resolve_udt_name=resolve_udt_name
-        )
+        # An SCError is not a generated class, so it needs an isinstance test
+        # against the xdr type rather than against a binding name.
         error_test = (
             f"isinstance({name}, xdr.SCError)"
             if error_t.type == xdr.SCSpecType.SC_SPEC_TYPE_ERROR
-            else f"isinstance({name}, {error_py_type})"
+            else f"isinstance({name}, {to_py_type(error_t, True, resolve_udt_name)})"
         )
         return (
-            f"{to_scval(error_t, name, resolve_udt_name)} if {error_test} "
-            f"else {to_scval(td.result.ok_type, name, resolve_udt_name)}"
+            f"{recur(error_t, name)} if {error_test} "
+            f"else {recur(td.result.ok_type, name)}"
         )
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
-        return f"scval.to_vec([{to_scval(td.vec.element_type, 'e', resolve_udt_name)} for e in {name}])"
+        return f"scval.to_vec([{recur(td.vec.element_type, 'e')} for e in {name}])"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-        return f"scval.to_map({{{to_scval(td.map.key_type, 'k', resolve_udt_name)}: {to_scval(td.map.value_type, 'v', resolve_udt_name)} for k, v in {name}.items()}})"
+        return (
+            f"scval.to_map({{{recur(td.map.key_type, 'k')}: "
+            f"{recur(td.map.value_type, 'v')} for k, v in {name}.items()}})"
+        )
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
-        types = [
-            to_scval(t, f"{name}[{i}]", resolve_udt_name)
-            for i, t in enumerate(td.tuple.value_types)
-        ]
-        return f"scval.to_tuple_struct([{', '.join(types)}])"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
-        return f"scval.to_bytes({name})"
+        values = [recur(v, f"{name}[{i}]") for i, v in enumerate(td.tuple.value_types)]
+        return f"scval.to_tuple_struct([{', '.join(values)}])"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
         return f"{name}.to_scval()"
     raise ValueError(f"Unsupported SCValType: {t}")
@@ -308,82 +305,63 @@ def from_scval(
     name: str,
     resolve_udt_name: UdtNameResolver = _default_udt_name,
 ):
+    def recur(inner: xdr.SCSpecTypeDef, inner_name: str) -> str:
+        return from_scval(inner, inner_name, resolve_udt_name)
+
     t = td.type
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VAL:
         return f"{name}"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_BOOL:
-        return f"scval.from_bool({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:
         return f"scval.from_void({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ERROR:
         return f"_from_error_scval({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_U32:
-        return f"scval.from_uint32({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_I32:
-        return f"scval.from_int32({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_U64:
-        return f"scval.from_uint64({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_I64:
-        return f"scval.from_int64({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_TIMEPOINT:
-        return f"scval.from_timepoint({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_DURATION:
-        return f"scval.from_duration({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_U128:
-        return f"scval.from_uint128({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_I128:
-        return f"scval.from_int128({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_U256:
-        return f"scval.from_uint256({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_I256:
-        return f"scval.from_int256({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES:
-        return f"scval.from_bytes({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_STRING:
-        return f"scval.from_string({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL:
-        return f"scval.from_symbol({name})"
-    if (
-        t == xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS
-        or t == xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS
-    ):
-        return f"scval.from_address({name})"
+    if t in _SCVAL_CODECS:
+        return f"scval.from_{_SCVAL_CODECS[t]}({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
-        return f"{from_scval(td.option.value_type, name, resolve_udt_name)} if {name}.type != xdr.SCValType.SCV_VOID else scval.from_void({name})"
+        return f"{recur(td.option.value_type, name)} if {name}.type != xdr.SCValType.SCV_VOID else scval.from_void({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
-        ok_t = td.result.ok_type
-        error_t = td.result.error_type
         return (
-            f"{from_scval(error_t, name, resolve_udt_name)} "
+            f"{recur(td.result.error_type, name)} "
             f"if {name}.type == xdr.SCValType.SCV_ERROR else "
-            f"{from_scval(ok_t, name, resolve_udt_name)}"
+            f"{recur(td.result.ok_type, name)}"
         )
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
-        return f"[{from_scval(td.vec.element_type, 'e', resolve_udt_name)} for e in scval.from_vec({name})]"
+        return f"[{recur(td.vec.element_type, 'e')} for e in scval.from_vec({name})]"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-        return f"{{{from_scval(td.map.key_type, 'k', resolve_udt_name)}: {from_scval(td.map.value_type, 'v', resolve_udt_name)} for k, v in scval.from_map({name}).items()}}"
+        return (
+            f"{{{recur(td.map.key_type, 'k')}: {recur(td.map.value_type, 'v')} "
+            f"for k, v in scval.from_map({name}).items()}}"
+        )
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
         if len(td.tuple.value_types) == 0:
             return "None"
         elements = f"scval.from_tuple_struct({name})"
-        types = [
-            from_scval(t, f"{elements}[{i}]", resolve_udt_name)
-            for i, t in enumerate(td.tuple.value_types)
+        values = [
+            recur(v, f"{elements}[{i}]") for i, v in enumerate(td.tuple.value_types)
         ]
-        return f"({', '.join(types)})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_BYTES_N:
-        return f"scval.from_bytes({name})"
+        return f"({', '.join(values)})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
         return f"{resolve_udt_name(td.udt.name.decode())}.from_scval({name})"
-    raise NotImplementedError(f"Unsupported SCValType: {t}")
+    raise ValueError(f"Unsupported SCValType: {t}")
+
+
+def _codec_helpers(resolve_udt_name: UdtNameResolver) -> dict:
+    """Template context for the three type mappers, bound to one resolver."""
+    return {
+        "to_py_type": lambda td, input_type=False: to_py_type(
+            td, input_type, resolve_udt_name
+        ),
+        "to_scval": lambda td, name: to_scval(td, name, resolve_udt_name),
+        "from_scval": lambda td, name: from_scval(td, name, resolve_udt_name),
+    }
 
 
 def render_info():
     return f"# This file was generated by stellar_contract_bindings v{stellar_contract_bindings_version} and stellar_sdk v{stellar_sdk_version}."
 
 
-def render_imports(client_type: str = "both", has_events: bool = False):
-    template = """
+_IMPORTS_TEMPLATE = _template(
+    """
 from __future__ import annotations
 
 {%- if has_events %}
@@ -407,10 +385,11 @@ from stellar_sdk.soroban_rpc import EventInfo
 
 NULL_ACCOUNT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
 """
-    rendered_code = Template(template).render(
-        client_type=client_type, has_events=has_events
-    )
-    return rendered_code
+)
+
+
+def render_imports(client_type: str = "both", has_events: bool = False):
+    return _IMPORTS_TEMPLATE.render(client_type=client_type, has_events=has_events)
 
 
 def render_scval_helpers():
@@ -422,9 +401,8 @@ def _from_error_scval(value: xdr.SCVal) -> xdr.SCError:
 """
 
 
-def render_enum(entry: xdr.SCSpecUDTEnumV0, class_name: str | None = None):
-    class_name = class_name or _default_udt_name(entry.name.decode())
-    template = """
+_ENUM_TEMPLATE = _template(
+    """
 class {{ class_name }}(IntEnum):
     {%- if entry.doc %}
     __doc__ = {{ python_docstring(entry.doc) }}
@@ -439,16 +417,17 @@ class {{ class_name }}(IntEnum):
     def from_scval(cls, val: xdr.SCVal):
         return cls(scval.from_uint32(val))
 """
-
-    rendered_code = Template(template).render(
-        entry=entry, class_name=class_name, python_docstring=python_docstring
-    )
-    return rendered_code
+)
 
 
-def render_error_enum(entry: xdr.SCSpecUDTErrorEnumV0, class_name: str | None = None):
+def render_enum(entry: xdr.SCSpecUDTEnumV0, class_name: str | None = None):
     class_name = class_name or _default_udt_name(entry.name.decode())
-    template = """
+
+    return _ENUM_TEMPLATE.render(entry=entry, class_name=class_name)
+
+
+_ERROR_ENUM_TEMPLATE = _template(
+    """
 class {{ class_name }}(IntEnum):
     {%- if entry.doc %}
     __doc__ = {{ python_docstring(entry.doc) }}
@@ -472,20 +451,17 @@ class {{ class_name }}(IntEnum):
             raise ValueError("expected an SCE_CONTRACT error")
         return cls(error.contract_code.uint32)
     """
-
-    rendered_code = Template(template).render(
-        entry=entry, class_name=class_name, python_docstring=python_docstring
-    )
-    return rendered_code
+)
 
 
-def render_struct(
-    entry: xdr.SCSpecUDTStructV0,
-    class_name: str | None = None,
-    resolve_udt_name: UdtNameResolver = _default_udt_name,
-):
+def render_error_enum(entry: xdr.SCSpecUDTErrorEnumV0, class_name: str | None = None):
     class_name = class_name or _default_udt_name(entry.name.decode())
-    template = """
+
+    return _ERROR_ENUM_TEMPLATE.render(entry=entry, class_name=class_name)
+
+
+_STRUCT_TEMPLATE = _template(
+    """
 class {{ class_name }}:
     {%- if entry.doc %}
     __doc__ = {{ python_docstring(entry.doc) }}
@@ -523,28 +499,25 @@ class {{ class_name }}:
     def __hash__(self) -> int:
         return hash(({% for field in entry.fields %}self.{{ field.name.decode() }}{% if not loop.last %}, {% endif %}{% endfor %}))
 """
-
-    rendered_code = Template(template).render(
-        entry=entry,
-        class_name=class_name,
-        to_py_type=lambda td, input_type=False: to_py_type(
-            td, input_type, resolve_udt_name
-        ),
-        to_scval=lambda td, name: to_scval(td, name, resolve_udt_name),
-        from_scval=lambda td, name: from_scval(td, name, resolve_udt_name),
-        enumerate=enumerate,
-        python_docstring=python_docstring,
-    )
-    return rendered_code
+)
 
 
-def render_tuple_struct(
+def render_struct(
     entry: xdr.SCSpecUDTStructV0,
     class_name: str | None = None,
     resolve_udt_name: UdtNameResolver = _default_udt_name,
 ):
     class_name = class_name or _default_udt_name(entry.name.decode())
-    template = """
+
+    return _STRUCT_TEMPLATE.render(
+        entry=entry,
+        class_name=class_name,
+        **_codec_helpers(resolve_udt_name),
+    )
+
+
+_TUPLE_STRUCT_TEMPLATE = _template(
+    """
 class {{ class_name }}:
     {%- if entry.doc %}
     __doc__ = {{ python_docstring(entry.doc) }}
@@ -570,27 +543,25 @@ class {{ class_name }}:
     def __hash__(self) -> int:
         return hash(self.value)
 """
-
-    rendered_code = Template(template).render(
-        entry=entry,
-        class_name=class_name,
-        to_py_type=lambda td, input_type=False: to_py_type(
-            td, input_type, resolve_udt_name
-        ),
-        to_scval=lambda td, name: to_scval(td, name, resolve_udt_name),
-        from_scval=lambda td, name: from_scval(td, name, resolve_udt_name),
-        python_docstring=python_docstring,
-    )
-    return rendered_code
+)
 
 
-def render_union(
-    entry: xdr.SCSpecUDTUnionV0,
+def render_tuple_struct(
+    entry: xdr.SCSpecUDTStructV0,
     class_name: str | None = None,
     resolve_udt_name: UdtNameResolver = _default_udt_name,
 ):
     class_name = class_name or _default_udt_name(entry.name.decode())
-    kind_enum_template = """
+
+    return _TUPLE_STRUCT_TEMPLATE.render(
+        entry=entry,
+        class_name=class_name,
+        **_codec_helpers(resolve_udt_name),
+    )
+
+
+_UNION_KIND_TEMPLATE = _template(
+    """
 class {{ class_name }}Kind(Enum):
     {%- for case in entry.cases %}
     {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0 %}
@@ -600,12 +571,11 @@ class {{ class_name }}Kind(Enum):
     {%- endif %}
     {%- endfor %}
 """
+)
 
-    kind_enum_rendered_code = Template(kind_enum_template).render(
-        entry=entry, class_name=class_name, xdr=xdr
-    )
 
-    template = """
+_UNION_TEMPLATE = _template(
+    """
 class {{ class_name }}:
     {%- if entry.doc %}
     __doc__ = {{ python_docstring(entry.doc) }}
@@ -699,21 +669,23 @@ class {{ class_name }}:
         {%- endfor %}
         return hash(self.kind)
 """
-    union_rendered_code = Template(template).render(
+)
+
+
+def render_union(
+    entry: xdr.SCSpecUDTUnionV0,
+    class_name: str | None = None,
+    resolve_udt_name: UdtNameResolver = _default_udt_name,
+):
+    class_name = class_name or _default_udt_name(entry.name.decode())
+
+    kind_enum = _UNION_KIND_TEMPLATE.render(entry=entry, class_name=class_name)
+    union = _UNION_TEMPLATE.render(
         entry=entry,
         class_name=class_name,
-        to_py_type=lambda td, input_type=False: to_py_type(
-            td, input_type, resolve_udt_name
-        ),
-        to_scval=lambda td, name: to_scval(td, name, resolve_udt_name),
-        from_scval=lambda td, name: from_scval(td, name, resolve_udt_name),
-        xdr=xdr,
-        len=len,
-        camel_to_snake=camel_to_snake,
-        enumerate=enumerate,
-        python_docstring=python_docstring,
+        **_codec_helpers(resolve_udt_name),
     )
-    return kind_enum_rendered_code + "\n" + union_rendered_code
+    return kind_enum + "\n" + union
 
 
 def python_identifier(name: str) -> str:
@@ -737,6 +709,16 @@ def event_class_name(name: str) -> str:
     pascal = "".join(part[:1].upper() + part[1:] for part in parts) or "Event"
     pascal = python_identifier(pascal)
     return pascal if pascal.endswith("Event") else pascal + "Event"
+
+
+# Annotation for everything parse()/matches() accept: a ContractEvent from
+# transaction meta, an RPC EventInfo, or a raw (topics, data) pair whose
+# members may be SCVals, base64 XDR strings or XDR bytes.
+_EVENT_INPUT_TYPE = (
+    "Union[xdr.ContractEvent, EventInfo, "
+    "Tuple[Sequence[Union[xdr.SCVal, str, bytes]], "
+    "Union[xdr.SCVal, str, bytes]]]"
+)
 
 
 def render_event_helpers():
@@ -929,33 +911,23 @@ def _event_doc(entry: xdr.SCSpecEventV0, param_names: List[str]) -> str:
     return "\n".join(lines)
 
 
-def render_event(
+def _event_params(
     entry: xdr.SCSpecEventV0,
-    class_name: str,
-    resolve_udt_name: UdtNameResolver = _default_udt_name,
-):
-    prefix_symbols = [s.sc_symbol.decode() for s in entry.prefix_topics]
-    data_format = entry.data_format
-    data_params = [
-        param
-        for param in entry.params
-        if param.location
-        == xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_DATA
-    ]
-    if (
-        data_format == xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE
-        and len(data_params) > 1
-    ):
-        raise ValueError(
-            "SINGLE_VALUE events may declare at most one data parameter; "
-            f"{entry.name.sc_symbol.decode()!r} declares {len(data_params)}"
-        )
+    param_names: List[str],
+    prefix_topic_count: int,
+    resolve_udt_name: UdtNameResolver,
+) -> Tuple[List[dict], List[dict], List[str]]:
+    """Work out how each declared parameter is typed, parsed and filtered.
 
-    param_names = resolve_event_param_names(entry)
-    params = []
-    topic_params = []
+    Returns the per-parameter render context, the subset that lands in the
+    topic list (which drives topic_filter), and the map keys that must be
+    present for a MAP-format event to parse.
+    """
+    data_format = entry.data_format
+    params: List[dict] = []
+    topic_params: List[dict] = []
     required_data_keys: List[str] = []
-    topic_index = len(prefix_symbols)
+    topic_index = prefix_topic_count
     data_index = 0
     for p, py_name in zip(entry.params, param_names):
         chain_name = p.name.decode()
@@ -1008,19 +980,11 @@ def render_event(
                 "parse_expr": parse_expr,
             }
         )
-    has_vec_data = data_format == (
-        xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_VEC
-    )
-    has_map_data = data_format == (
-        xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_MAP
-    )
-    validate_void_data = (
-        data_format == xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE
-        and not data_params
-    )
-    event_doc = _event_doc(entry, param_names)
+    return params, topic_params, required_data_keys
 
-    template = """
+
+_EVENT_TEMPLATE = _template(
+    """
 class {{ class_name }}:
     {%- if event_doc %}
     __doc__ = {{ event_doc }}
@@ -1132,7 +1096,48 @@ class {{ class_name }}:
     def __repr__(self):
         return f"<{{ class_name }} [{% for p in params %}{{ p.py_name }}={self.{{ p.py_name }}}{% if not loop.last %}, {% endif %}{% endfor %}]>"
 """
-    rendered_code = Template(template).render(
+)
+
+
+def render_event(
+    entry: xdr.SCSpecEventV0,
+    class_name: str,
+    resolve_udt_name: UdtNameResolver = _default_udt_name,
+):
+    prefix_symbols = [s.sc_symbol.decode() for s in entry.prefix_topics]
+    data_format = entry.data_format
+    data_params = [
+        param
+        for param in entry.params
+        if param.location
+        == xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_DATA
+    ]
+    if (
+        data_format == xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE
+        and len(data_params) > 1
+    ):
+        raise ValueError(
+            "SINGLE_VALUE events may declare at most one data parameter; "
+            f"{entry.name.sc_symbol.decode()!r} declares {len(data_params)}"
+        )
+
+    param_names = resolve_event_param_names(entry)
+    params, topic_params, required_data_keys = _event_params(
+        entry, param_names, len(prefix_symbols), resolve_udt_name
+    )
+    has_vec_data = data_format == (
+        xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_VEC
+    )
+    has_map_data = data_format == (
+        xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_MAP
+    )
+    validate_void_data = (
+        data_format == xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE
+        and not data_params
+    )
+    event_doc = _event_doc(entry, param_names)
+
+    return _EVENT_TEMPLATE.render(
         class_name=class_name,
         event_doc=repr(event_doc) if event_doc else None,
         event_name=repr(entry.name.sc_symbol.decode()),
@@ -1140,34 +1145,17 @@ class {{ class_name }}:
         total_topics=declared_topic_count(entry),
         params=params,
         topic_params=topic_params,
-        event_input_type=(
-            "Union[xdr.ContractEvent, EventInfo, "
-            "Tuple[Sequence[Union[xdr.SCVal, str, bytes]], "
-            "Union[xdr.SCVal, str, bytes]]]"
-        ),
+        event_input_type=_EVENT_INPUT_TYPE,
         has_vec_data=has_vec_data,
         has_map_data=has_map_data,
         required_data_keys=[repr(key) for key in required_data_keys],
         validate_void_data=validate_void_data,
         data_param_count=len(data_params),
     )
-    return rendered_code
 
 
-def render_event_dispatcher(
-    entries: List[xdr.SCSpecEventV0], class_names: List[str], union_name: str = "Event"
-):
-    # Try the most specific declaration (most declared topics) first, so a
-    # shorter declaration sharing the same prefix cannot swallow events of a
-    # longer one via the extra-trailing-topics tolerance. Ties keep spec order.
-    ordered_names = [
-        name
-        for _, name in sorted(
-            zip(entries, class_names),
-            key=lambda pair: -declared_topic_count(pair[0]),
-        )
-    ]
-    template = """
+_EVENT_DISPATCHER_TEMPLATE = _template(
+    """
 {{ union_name }} = Union[{{ class_names | join(', ') }}]
 
 _EVENTS = [{{ ordered_names | join(', ') }}]
@@ -1214,25 +1202,32 @@ def parse_event(
         _logger.warning(message)
     return None
 """
-    rendered_code = Template(template).render(
+)
+
+
+def render_event_dispatcher(
+    entries: List[xdr.SCSpecEventV0], class_names: List[str], union_name: str = "Event"
+):
+    # Try the most specific declaration (most declared topics) first, so a
+    # shorter declaration sharing the same prefix cannot swallow events of a
+    # longer one via the extra-trailing-topics tolerance. Ties keep spec order.
+    ordered_names = [
+        name
+        for _, name in sorted(
+            zip(entries, class_names),
+            key=lambda pair: -declared_topic_count(pair[0]),
+        )
+    ]
+    return _EVENT_DISPATCHER_TEMPLATE.render(
         class_names=class_names,
         ordered_names=ordered_names,
         union_name=union_name,
-        event_input_type=(
-            "Union[xdr.ContractEvent, EventInfo, "
-            "Tuple[Sequence[Union[xdr.SCVal, str, bytes]], "
-            "Union[xdr.SCVal, str, bytes]]]"
-        ),
+        event_input_type=_EVENT_INPUT_TYPE,
     )
-    return rendered_code
 
 
-def render_client(
-    entries: List[xdr.SCSpecFunctionV0],
-    client_type: str,
-    resolve_udt_name: UdtNameResolver = _default_udt_name,
-):
-    template = '''
+_CLIENT_TEMPLATE = _template(
+    """
 {%- if client_type == "sync" or client_type == "both" %}
 class Client(ContractClient):
     {%- for entry in entries %}
@@ -1258,7 +1253,15 @@ class ClientAsync(ContractClientAsync):
     pass
     {%- endfor %}
 {%- endif %}
-'''
+"""
+)
+
+
+def render_client(
+    entries: List[xdr.SCSpecFunctionV0],
+    client_type: str,
+    resolve_udt_name: UdtNameResolver = _default_udt_name,
+):
 
     def function_output(td: xdr.SCSpecTypeDef) -> xdr.SCSpecTypeDef:
         """Strip a top-level Result wrapper from a function's return type.
@@ -1293,78 +1296,63 @@ class ClientAsync(ContractClientAsync):
                 "Tuple return type is not supported, please report this issue"
             )
 
-    client_rendered_code = Template(template).render(
+    return _CLIENT_TEMPLATE.render(
         entries=entries,
-        to_py_type=lambda td, input_type=False: to_py_type(
-            td, input_type, resolve_udt_name
-        ),
-        to_scval=lambda td, name: to_scval(td, name, resolve_udt_name),
+        **_codec_helpers(resolve_udt_name),
         parse_result_type=parse_result_type,
         parse_result_xdr_fn=parse_result_xdr_fn,
         client_type=client_type,
-        python_docstring=python_docstring,
     )
-    return client_rendered_code
 
 
-# append _ to keyword
+def _rename_if_keyword(owner, attr: str = "name") -> None:
+    """Suffix a spec identifier with ``_`` when it is a Python keyword.
+
+    The original bytes are stashed on a parallel ``<attr>_r`` attribute, which
+    the templates read wherever the name goes on the wire. It stays unset for
+    names that did not need renaming, and for identifiers the wire never sees
+    (function parameters, enum cases) nothing reads it at all.
+    """
+    original = getattr(owner, attr)
+    if keyword.iskeyword(original.decode()):
+        setattr(owner, f"{attr}_r", original)
+        setattr(owner, attr, original + b"_")
+
+
 def append_underscore(specs: List[xdr.SCSpecEntry]):
+    """Rename every spec identifier that collides with a Python keyword."""
     for spec in specs:
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0:
-            assert spec.udt_struct_v0 is not None
-            if keyword.iskeyword(spec.udt_struct_v0.name.decode()):
-                spec.udt_struct_v0.name_r = spec.udt_struct_v0.name  # type: ignore[attr-defined]
-                spec.udt_struct_v0.name = spec.udt_struct_v0.name + b"_"
+            _rename_if_keyword(spec.udt_struct_v0)
             for field in spec.udt_struct_v0.fields:
-                if keyword.iskeyword(field.name.decode()):
-                    field.name_r = field.name  # type: ignore[attr-defined]
-                    field.name = field.name + b"_"
-        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
-            assert spec.udt_union_v0 is not None
-            if keyword.iskeyword(spec.udt_union_v0.name.decode()):
-                spec.udt_union_v0.name_r = spec.udt_union_v0.name  # type: ignore[attr-defined]
-                spec.udt_union_v0.name = spec.udt_union_v0.name + b"_"
+                _rename_if_keyword(field)
+        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
+            _rename_if_keyword(spec.udt_union_v0)
             for union_case in spec.udt_union_v0.cases:
                 if (
                     union_case.kind
                     == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_TUPLE_V0
                 ):
-                    if keyword.iskeyword(union_case.tuple_case.name.decode()):
-                        union_case.tuple_case.name_r = union_case.tuple_case.name  # type: ignore[attr-defined]
-                        union_case.tuple_case.name = union_case.tuple_case.name + b"_"
+                    _rename_if_keyword(union_case.tuple_case)
                 elif (
                     union_case.kind
                     == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0
                 ):
-                    if keyword.iskeyword(union_case.void_case.name.decode()):
-                        union_case.void_case.name_r = union_case.void_case.name  # type: ignore[attr-defined]
-                        union_case.void_case.name = union_case.void_case.name + b"_"
+                    _rename_if_keyword(union_case.void_case)
                 else:
                     raise ValueError(f"Unsupported union case kind: {union_case.kind}")
-        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0:
-            assert spec.function_v0 is not None
-            if keyword.iskeyword(spec.function_v0.name.sc_symbol.decode()):
-                spec.function_v0.name.sc_symbol_r = spec.function_v0.name.sc_symbol  # type: ignore[attr-defined]
-                spec.function_v0.name.sc_symbol = spec.function_v0.name.sc_symbol + b"_"
+        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0:
+            _rename_if_keyword(spec.function_v0.name, "sc_symbol")
             for param in spec.function_v0.inputs:
-                if keyword.iskeyword(param.name.decode()):
-                    param.name = param.name + b"_"
-        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ENUM_V0:
-            assert spec.udt_enum_v0 is not None
-            if keyword.iskeyword(spec.udt_enum_v0.name.decode()):
-                spec.udt_enum_v0.name_r = spec.udt_enum_v0.name  # type: ignore[attr-defined]
-                spec.udt_enum_v0.name = spec.udt_enum_v0.name + b"_"
+                _rename_if_keyword(param)
+        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ENUM_V0:
+            _rename_if_keyword(spec.udt_enum_v0)
             for enum_case in spec.udt_enum_v0.cases:
-                if keyword.iskeyword(enum_case.name.decode()):
-                    enum_case.name = enum_case.name + b"_"
-        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ERROR_ENUM_V0:
-            assert spec.udt_error_enum_v0 is not None
-            if keyword.iskeyword(spec.udt_error_enum_v0.name.decode()):
-                spec.udt_error_enum_v0.name_r = spec.udt_error_enum_v0.name  # type: ignore[attr-defined]
-                spec.udt_error_enum_v0.name = spec.udt_error_enum_v0.name + b"_"
+                _rename_if_keyword(enum_case)
+        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ERROR_ENUM_V0:
+            _rename_if_keyword(spec.udt_error_enum_v0)
             for error_enum_case in spec.udt_error_enum_v0.cases:
-                if keyword.iskeyword(error_enum_case.name.decode()):
-                    error_enum_case.name = error_enum_case.name + b"_"
+                _rename_if_keyword(error_enum_case)
 
 
 def generate_binding_with_diagnostics(
