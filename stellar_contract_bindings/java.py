@@ -23,6 +23,55 @@ _JAVA_KEYWORDS = frozenset(
 )
 
 
+# Characters with a named escape in a Java string literal. The backslash is
+# listed first only for readability; the loop below checks membership, so the
+# ordering that matters is that this table is consulted before any other rule.
+_JAVA_ESCAPES = {
+    "\\": "\\\\",
+    '"': '\\"',
+    "\b": "\\b",
+    "\f": "\\f",
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+}
+
+
+def java_string_literal(text: str) -> str:
+    """Render spec text as a Java string literal, quotes included.
+
+    Names arrive in the contract spec, so a contract can publish one that
+    closes the literal and continues with code of its own. Escaping the
+    backslash and the quote is what stops that.
+
+    The remaining rules are about Java specifically. Unicode escapes are
+    processed in a translation phase *before* lexing (JLS 3.3), so a
+    ``\\uXXXX`` that decodes to a quote would close the literal even though it
+    sits inside one. Unicode escapes are therefore only used for characters at
+    or above U+0080, which can never be syntactically significant; control
+    characters take an octal escape instead, which the lexer reads. Always
+    three octal digits, so a following digit cannot extend the escape.
+
+    Everything at or above U+0080 is escaped rather than emitted directly, so
+    the generated file is pure ASCII and its meaning does not depend on the
+    encoding javac happens to read it with.
+    """
+    out = ['"']
+    for char in text:
+        if char in _JAVA_ESCAPES:
+            out.append(_JAVA_ESCAPES[char])
+        elif " " <= char <= "~":
+            out.append(char)
+        elif char < "\u0080":
+            out.append(f"\\{ord(char):03o}")
+        else:
+            units = char.encode("utf-16-be")
+            for i in range(0, len(units), 2):
+                out.append(f"\\u{units[i] << 8 | units[i + 1]:04x}")
+    out.append('"')
+    return "".join(out)
+
+
 def is_keywords(word: str) -> bool:
     return word in _JAVA_KEYWORDS
 
@@ -208,9 +257,9 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str, depth: int = 0):
         return f"{name}"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:
         # Scv.fromVoid is `void fromVoid(SCVal)`, so it cannot be used where a
-        # value is expected. to_java_type() maps void to Void, whose only value
-        # is null - the same thing the empty-tuple branch below emits.
-        return "null"
+        # value is expected; the generated decodeVoid wraps it. Returning a
+        # bare "null" instead would accept any SCVal as a declared void.
+        return f"decodeVoid({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_ERROR:
         raise NotImplementedError(_UNSUPPORTED_ERROR)
     if t in _SCV_CODECS:
@@ -254,6 +303,7 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str, depth: int = 0):
 # Registered here rather than beside _ENV, since the type mappers below
 # have to exist first.
 _ENV.globals.update(
+    java_string_literal=java_string_literal,
     convert_name=convert_name,
     enumerate=enumerate,
     from_scval=from_scval,
@@ -387,7 +437,7 @@ public static class {{ entry.name.decode() }} {
     public SCVal toSCVal() {
         TreeMap<String, SCVal> fields = new TreeMap<>();
         {%- for field in entry.fields %}
-        fields.put("{{ field.name_r.decode() if field.name_r else field.name.decode() }}", {{ to_scval(field.type, 'this.' ~ field.name.decode()) }});
+        fields.put({{ java_string_literal(field.name_r.decode() if field.name_r else field.name.decode()) }}, {{ to_scval(field.type, 'this.' ~ field.name.decode()) }});
         {%- endfor %}
         LinkedHashMap<SCVal, SCVal> map = fields.entrySet().stream()
                 .collect(LinkedHashMap::new, (m, e) -> m.put(Scv.toSymbol(e.getKey()), e.getValue()), LinkedHashMap::putAll);
@@ -398,7 +448,7 @@ public static class {{ entry.name.decode() }} {
         LinkedHashMap<SCVal, SCVal> map = Scv.fromMap(scVal);
         return new {{ entry.name.decode() }}(
             {%- for index, field in enumerate(entry.fields) %}
-            {{ from_scval(field.type, 'map.get(Scv.toSymbol("' ~ (field.name_r.decode() if field.name_r else field.name.decode()) ~ '"))') }}{% if not loop.last %},{% endif %}
+            {{ from_scval(field.type, 'map.get(Scv.toSymbol(' ~ java_string_literal(field.name_r.decode() if field.name_r else field.name.decode()) ~ '))') }}{% if not loop.last %},{% endif %}
             {%- endfor %}        
         );
     }
@@ -517,9 +567,9 @@ public static class {{ entry.name.decode() }} {
     public enum Kind {
         {%- for case in entry.cases %}
         {%- if case.kind == xdr.SCSpecUDTUnionCaseV0Kind.SC_SPEC_UDT_UNION_CASE_VOID_V0 %}
-        {{ case.void_case.name.decode() }}("{{ case.void_case.name_r.decode() if case.void_case.name_r else case.void_case.name.decode() }}"){% if loop.last %};{% else %},{% endif %}
+        {{ case.void_case.name.decode() }}({{ java_string_literal(case.void_case.name_r.decode() if case.void_case.name_r else case.void_case.name.decode()) }}){% if loop.last %};{% else %},{% endif %}
         {%- else %}
-        {{ case.tuple_case.name.decode() }}("{{ case.tuple_case.name_r.decode() if case.tuple_case.name_r else case.tuple_case.name.decode() }}"){% if loop.last %};{% else %},{% endif %}
+        {{ case.tuple_case.name.decode() }}({{ java_string_literal(case.tuple_case.name_r.decode() if case.tuple_case.name_r else case.tuple_case.name.decode()) }}){% if loop.last %};{% else %},{% endif %}
         {%- endif %}
         {%- endfor %}
 
@@ -557,6 +607,21 @@ _FUNCTIONS_TEMPLATE = _template(
     public Client(String contractId, String rpcUrl, Network network) {
         super(contractId, rpcUrl, network);
     }
+
+    /**
+     * Decodes a value the spec declares as void.
+     *
+     * <p>A void carries no data, but the SCVal still has to be a void one.
+     * {@link Scv#fromVoid} performs that check and returns {@code void}, so it
+     * cannot be called where a value is expected; this wraps it.
+     *
+     * @param scVal the value to check
+     * @return null, the only value of {@link Void}
+     */
+    private static Void decodeVoid(SCVal scVal) {
+        Scv.fromVoid(scVal);
+        return null;
+    }
     
     
     {%- for entry in entries %}
@@ -564,7 +629,7 @@ _FUNCTIONS_TEMPLATE = _template(
         return {{ entry.name.sc_symbol.decode() }}({% for param in entry.inputs %}{{ param.name.decode() }}, {% endfor %} source, signer, baseFee, 300, 30, true, true);
     }
     public AssembledTransaction<{{ parse_result_type(entry.outputs) }}> {{ entry.name.sc_symbol.decode() }}({% for param in entry.inputs %}{{ to_java_type(param.type) }} {{ param.name.decode() }}, {% endfor %}String source, KeyPair signer, int baseFee, int transactionTimeout, int submitTimeout, boolean simulate, boolean restore) {
-        return invoke("{{ entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode() }}", Arrays.asList({% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}), source, signer, {{ parse_result_xdr_fn(entry.outputs) }}, baseFee, transactionTimeout, submitTimeout, simulate, restore);
+        return invoke({{ java_string_literal(entry.name.sc_symbol_r.decode() if entry.name.sc_symbol_r else entry.name.sc_symbol.decode()) }}, Arrays.asList({% for param in entry.inputs %}{{ to_scval(param.type, param.name.decode()) }}{% if not loop.last %}, {% endif %}{% endfor %}), source, signer, {{ parse_result_xdr_fn(entry.outputs) }}, baseFee, transactionTimeout, submitTimeout, simulate, restore);
     }
     {%- endfor %} 
 
