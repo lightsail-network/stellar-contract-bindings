@@ -1,6 +1,6 @@
 import os
 import re
-from typing import List
+from typing import List, Tuple
 
 import click
 from jinja2 import Environment, Template
@@ -103,6 +103,180 @@ def get_tuple_class_name(amount: int) -> str:
     return f"Tuple{amount}"
 
 
+def java_identifier(name: str, first_letter_lower: bool = False) -> str:
+    """Return a valid Java identifier, keeping as much of the name as possible.
+
+    Spec names are only length-limited, so they can hold characters Java does
+    not accept in an identifier, or be empty. Anything unusable becomes an
+    underscore rather than being dropped, so two different names stay
+    different; keywords and the empty case get a trailing underscore.
+    """
+    candidate = "".join(
+        char if (char.isalnum() or char in "_$") and char.isascii() else "_"
+        for char in name
+    )
+    if not candidate or candidate[0].isdigit():
+        candidate = "_" + candidate
+    if first_letter_lower:
+        candidate = candidate[:1].lower() + candidate[1:]
+    if is_keywords(candidate):
+        candidate += "_"
+    return candidate
+
+
+def event_class_name(name: str) -> str:
+    """Turn an event's declared name into a PascalCase Java class name."""
+    parts = [part for part in re.split(r"_+", java_identifier(name)) if part]
+    pascal = "".join(part[:1].upper() + part[1:] for part in parts) or "Event"
+    pascal = java_identifier(pascal)
+    return pascal if pascal.endswith("Event") else pascal + "Event"
+
+
+def declared_topic_count(entry: xdr.SCSpecEventV0) -> int:
+    return len(entry.prefix_topics) + sum(
+        1
+        for p in entry.params
+        if p.location
+        == xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_TOPIC_LIST
+    )
+
+
+# Nested-class names the generator itself needs, in allocation order. Every UDT
+# is emitted as a nested class of Client, so a contract type can occupy any of
+# these; each is therefore resolved against the declared type names rather than
+# assumed free.
+_EVENT_HELPER_NAMES = ("Event", "DecodedEvent", "UnparsedEventException")
+
+
+def resolve_event_names(
+    specs: List[xdr.SCSpecEntry], event_specs: List[xdr.SCSpecEventV0]
+) -> Tuple[List[str], List[str], str]:
+    """Name the event classes and the scaffolding, uniquely within Client.
+
+    Every UDT is emitted as a nested class of Client, so an event class or a
+    generated helper sharing a UDT's name would not compile. Both are allocated
+    from the declared type names, so a contract type called ``DecodedEvent``
+    pushes the helper aside rather than colliding with it.
+
+    Returns the helper names in ``_EVENT_HELPER_NAMES`` order, the per-event
+    class names, and the marker interface name (the first helper).
+    """
+    used = {"Client"}
+    for spec in specs:
+        for kind, attr in (
+            (xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ENUM_V0, "udt_enum_v0"),
+            (xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ERROR_ENUM_V0, "udt_error_enum_v0"),
+            (xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0, "udt_struct_v0"),
+            (xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0, "udt_union_v0"),
+        ):
+            if spec.kind == kind:
+                used.add(getattr(spec, attr).name.decode())
+
+    helper_names = []
+    for helper in _EVENT_HELPER_NAMES:
+        while helper in used:
+            helper += "_"
+        used.add(helper)
+        helper_names.append(helper)
+
+    class_names = []
+    for event_spec in event_specs:
+        name = event_class_name(event_spec.name.sc_symbol.decode())
+        while name in used:
+            name += "_"
+        used.add(name)
+        class_names.append(name)
+    return helper_names, class_names, helper_names[0]
+
+
+def resolve_event_param_names(entry: xdr.SCSpecEventV0) -> List[str]:
+    """Allocate valid, unique Java field names for one event's parameters."""
+    used = set()
+    names = []
+    for param in entry.params:
+        name = java_identifier(convert_name(param.name, True).decode(), True)
+        while name in used:
+            name += "_"
+        used.add(name)
+        names.append(name)
+    return names
+
+
+def _udt_member_types(specs: List[xdr.SCSpecEntry]) -> dict:
+    """Map each UDT's declared name to the types it holds.
+
+    Needed to look past a UDT reference: a struct field or union case can be a
+    type an event must not carry, and the reference alone does not show it.
+    """
+    members: dict = {}
+    for spec in specs:
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0:
+            entry = spec.udt_struct_v0
+            members[entry.name.decode()] = [
+                (field.name.decode(), field.type) for field in entry.fields
+            ]
+        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
+            entry = spec.udt_union_v0
+            cases = []
+            for case in entry.cases:
+                if case.tuple_case is not None:
+                    for index, value_type in enumerate(case.tuple_case.type):
+                        cases.append(
+                            (f"{case.tuple_case.name.decode()}.{index}", value_type)
+                        )
+            members[entry.name.decode()] = cases
+    return members
+
+
+def _reject_unsupported_event_type(
+    td: xdr.SCSpecTypeDef,
+    event: str,
+    param: str,
+    path: str = "",
+    udt_members: dict = None,
+    seen: frozenset = frozenset(),
+) -> None:
+    """Refuse to generate an event field this generator cannot decode faithfully.
+
+    ``to_java_type`` reduces ``Result<T, E>`` to ``T``, which is defensible for a
+    successful function result but not for an event: an event may carry the Err
+    arm, and the generated decoder would read it as an Ok. ``Error`` has no Java
+    representation here at all. Both are rejected with the path that reached
+    them rather than silently mis-decoding.
+    """
+    t = td.type
+    if t in (xdr.SCSpecType.SC_SPEC_TYPE_ERROR, xdr.SCSpecType.SC_SPEC_TYPE_RESULT):
+        where = f"{event}.{param}{path}"
+        raise NotImplementedError(
+            f"event parameter {where} is declared {t.name}, which the Java "
+            f"generator cannot decode; only the Ok arm would be read"
+        )
+
+    def recur(inner, suffix, seen=seen):
+        _reject_unsupported_event_type(
+            inner, event, param, path + suffix, udt_members, seen
+        )
+
+    if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
+        recur(td.option.value_type, "?")
+    elif t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
+        recur(td.vec.element_type, "[]")
+    elif t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
+        recur(td.map.key_type, ".key")
+        recur(td.map.value_type, ".value")
+    elif t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
+        for index, value_type in enumerate(td.tuple.value_types):
+            recur(value_type, f".{index}")
+    elif t == xdr.SCSpecType.SC_SPEC_TYPE_UDT and udt_members is not None:
+        # A UDT hides its members behind a name, and its generated decoder has
+        # the same blind spot as an inline one would. Recursive types are
+        # possible, so each name is only descended into once.
+        name = td.udt.name.decode()
+        if name not in seen:
+            for member_name, member_type in udt_members.get(name, []):
+                recur(member_type, f".{member_name}", seen | {name})
+
+
 # Scalar SCSpecTypes whose Scv helpers are named symmetrically, so that
 # to_scval emits Scv.to<Codec> and from_scval emits Scv.from<Codec>.
 _SCV_CODECS = {
@@ -199,7 +373,9 @@ def to_java_type(td: xdr.SCSpecTypeDef):
         types = [to_java_type(v) for v in td.tuple.value_types]
         return f"{get_tuple_class_name(len(types))}<{', '.join(types)}>"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
-        return td.udt.name.decode()
+        # append_underscore() rewrites the declaration's name; a reference
+        # has to be spelled the same way or it names a class that is not there.
+        return convert_name(td.udt.name).decode()
     raise ValueError(f"Unsupported SCValType: {t}")
 
 
@@ -290,7 +466,7 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str, depth: int = 0):
             f"({', '.join(values)})"
         )
     if t == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
-        return f"{td.udt.name.decode()}.fromSCVal({name})"
+        return f"{convert_name(td.udt.name).decode()}.fromSCVal({name})"
     raise ValueError(f"Unsupported SCValType: {t}")
 
 
@@ -417,11 +593,15 @@ import org.stellar.sdk.KeyPair;
 import org.stellar.sdk.Network;
 import org.stellar.sdk.contract.AssembledTransaction;
 import org.stellar.sdk.contract.ContractClient;
+import org.stellar.sdk.responses.sorobanrpc.GetEventsResponse;
 import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.ContractEvent;
 import org.stellar.sdk.xdr.SCVal;
 import org.stellar.sdk.xdr.SCValType;
 
+import java.io.IOException;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.stream.Collectors;
 """
@@ -746,6 +926,477 @@ def render_functions(entries: List[xdr.SCSpecFunctionV0]):
 
 
 # append _ to keyword
+_EVENT_HELPERS_TEMPLATE = _template(
+    """
+    /** Every event this contract declares. */
+    public interface {{ union }} {}
+
+    /**
+     * An event's topics and data, decoded once.
+     *
+     * <p>parseEvent offers the same instance to every candidate; decoding per
+     * candidate would re-parse the base64 an RPC event arrives as, once per
+     * declaration that does not match.
+     */
+    @Value
+    public static class {{ decoded }} {
+        List<SCVal> topics;
+        SCVal data;
+
+        /** Decodes an event carried in transaction meta. */
+        public static {{ decoded }} of(ContractEvent event) {
+            if (event.getBody() == null || event.getBody().getV0() == null) {
+                throw new IllegalArgumentException("contract event has no v0 body");
+            }
+            return new {{ decoded }}(
+                Arrays.asList(event.getBody().getV0().getTopics()),
+                event.getBody().getV0().getData());
+        }
+
+        /** Decodes an event as returned by getEvents, whose fields are base64 XDR. */
+        public static {{ decoded }} of(GetEventsResponse.EventInfo event) {
+            List<SCVal> topics = event.parseTopic();
+            SCVal data = event.parseValue();
+            if (topics == null || data == null) {
+                throw new IllegalArgumentException("event is missing topics or value");
+            }
+            return new {{ decoded }}(topics, data);
+        }
+    }
+
+    /**
+     * Thrown when an event's topics match a declared event but no candidate
+     * could decode it, which usually means the on-chain format has drifted
+     * from the spec these bindings were generated from.
+     */
+    public static class {{ unparsed }} extends IllegalArgumentException {
+        public {{ unparsed }}(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * SEP-48: a static topic may be published as either a symbol or a string,
+     * and parsers are expected to accept both.
+     */
+    private static boolean staticTopicMatches(SCVal topic, String expected) {
+        if (topic.getDiscriminant() == SCValType.SCV_SYMBOL) {
+            return expected.equals(Scv.fromSymbol(topic));
+        }
+        if (topic.getDiscriminant() == SCValType.SCV_STRING) {
+            return Arrays.equals(
+                Scv.fromString(topic), expected.getBytes(StandardCharsets.UTF_8));
+        }
+        return false;
+    }
+
+    /**
+     * Encodes one topic of a getEvents filter row.
+     *
+     * <p>SCVal.toXdrBase64 declares IOException, but it is writing to memory:
+     * a failure is a bug here, not something a caller can act on.
+     */
+    private static String encodeTopic(SCVal topic) {
+        try {
+            return topic.toXdrBase64();
+        } catch (IOException e) {
+            throw new IllegalStateException("could not encode topic filter", e);
+        }
+    }
+
+    /** Reads a symbol-keyed data map into something the decoders can look up. */
+    private static LinkedHashMap<String, SCVal> eventDataMap(SCVal data) {
+        LinkedHashMap<String, SCVal> out = new LinkedHashMap<>();
+        for (Map.Entry<SCVal, SCVal> entry : Scv.fromMap(data).entrySet()) {
+            out.put(Scv.fromSymbol(entry.getKey()), entry.getValue());
+        }
+        return out;
+    }
+"""
+)
+
+
+_EVENT_TEMPLATE = _template(
+    """
+    @Value
+    public static class {{ class_name }} implements {{ union }} {
+        /** The name this event is declared under in the contract spec. */
+        public static final String EVENT_NAME = {{ event_name }};
+
+        {%- for p in params %}
+        {{ p.java_type }} {{ p.java_name }};
+        {%- endfor %}
+        {%- if not params %}
+
+        // No declared parameters; the topics alone identify this event.
+        {%- endif %}
+
+        /**
+         * Starts one topics row for
+         * {@link org.stellar.sdk.requests.sorobanrpc.GetEventsRequest.EventFilter}.
+         *
+         * <p>A topic left unset is filtered as a wildcard. That is distinct from
+         * setting it to null, which matches only an explicit void.
+         */
+        public static TopicFilterBuilder topicFilter() {
+            return new TopicFilterBuilder();
+        }
+
+        public static final class TopicFilterBuilder {
+            {%- for p in topic_params %}
+            private {{ p.java_type }} {{ p.java_name }};
+            private boolean {{ p.set_flag }};
+            {%- endfor %}
+
+            {%- for p in topic_params %}
+
+            public TopicFilterBuilder {{ p.java_name }}({{ p.java_type }} {{ p.java_name }}) {
+                this.{{ p.java_name }} = {{ p.java_name }};
+                this.{{ p.set_flag }} = true;
+                return this;
+            }
+            {%- endfor %}
+
+            /**
+             * Builds the row.
+             *
+             * <p>It ends with "**" so that, like {@code matches}, it also selects
+             * events carrying topics beyond the declared ones; without it the RPC
+             * matches on exact topic count and those events are skipped. "**"
+             * needs stellar-rpc v23.0.0 or newer, the release that introduced
+             * SEP-48 event specs, and does not count towards the filter's four
+             * segments.
+             */
+            public List<String> build() {
+                List<String> row = new ArrayList<>();
+                {%- for symbol in prefix_symbols %}
+                row.add(encodeTopic(Scv.toSymbol({{ symbol }})));
+                {%- endfor %}
+                {%- for p in topic_params %}
+                row.add({{ p.set_flag }} ? encodeTopic({{ p.filter_expr }}) : "*");
+                {%- endfor %}
+                row.add("**");
+                return Collections.unmodifiableList(row);
+            }
+        }
+
+        /**
+         * Whether the topics have this event's shape.
+         *
+         * <p>Only the static prefix and the topic count are checked. Trailing
+         * topics beyond the declared ones are ignored, because contracts append
+         * them: Stellar Asset Contract events carry the SEP-11 asset string.
+         */
+        public static boolean matches({{ decoded }} event) {
+            List<SCVal> topics = event.getTopics();
+            if (topics.size() < {{ total_topics }}) {
+                return false;
+            }
+            {%- for symbol in prefix_symbols %}
+            if (!staticTopicMatches(topics.get({{ loop.index0 }}), {{ symbol }})) {
+                return false;
+            }
+            {%- endfor %}
+            return true;
+        }
+
+        public static boolean matches(ContractEvent event) {
+            return matches({{ decoded }}.of(event));
+        }
+
+        public static boolean matches(GetEventsResponse.EventInfo event) {
+            return matches({{ decoded }}.of(event));
+        }
+
+        /**
+         * Decodes the event.
+         *
+         * @throws IllegalArgumentException if it does not have this event's shape
+         */
+        public static {{ class_name }} parse({{ decoded }} event) {
+            if (!matches(event)) {
+                throw new IllegalArgumentException(
+                    "event does not match {{ class_name }}");
+            }
+            List<SCVal> topics = event.getTopics();
+            {%- if validate_void_data %}
+            decodeVoid(event.getData());
+            {%- endif %}
+            {%- if has_vec_data %}
+            // Scv.fromVec returns a Collection; indexing needs a List.
+            List<SCVal> values = new ArrayList<>(Scv.fromVec(event.getData()));
+            if (values.size() < {{ data_param_count }}) {
+                throw new IllegalArgumentException(
+                    "event data vector has fewer values than declared");
+            }
+            {%- endif %}
+            {%- if has_map_data %}
+            LinkedHashMap<String, SCVal> values = eventDataMap(event.getData());
+            {%- for key in required_data_keys %}
+            if (!values.containsKey({{ key }})) {
+                throw new IllegalArgumentException(
+                    "event data map is missing required entry " + {{ key }});
+            }
+            {%- endfor %}
+            {%- endif %}
+            return new {{ class_name }}(
+                {%- for p in params %}
+                {{ p.parse_expr }}{% if not loop.last %},{% endif %}
+                {%- endfor %}
+            );
+        }
+
+        public static {{ class_name }} parse(ContractEvent event) {
+            return parse({{ decoded }}.of(event));
+        }
+
+        public static {{ class_name }} parse(GetEventsResponse.EventInfo event) {
+            return parse({{ decoded }}.of(event));
+        }
+    }
+"""
+)
+
+
+_EVENT_DISPATCHER_TEMPLATE = _template(
+    """
+    /**
+     * Decodes an event emitted by this contract.
+     *
+     * <p>Candidates are tried most specific first, by declared topic count, then
+     * in spec order. Declarations sharing a topic shape are separated by which
+     * one can decode the data, so a candidate failing to parse is part of the
+     * normal flow rather than an error.
+     *
+     * @return the decoded event, or empty if no declaration matches the topics
+     * @throws {{ unparsed }} if the topics matched at least one
+     *     declaration but none of them could decode the event
+     */
+    public static Optional<{{ union }}> parseEvent({{ decoded }} event) {
+        List<String> failures = new ArrayList<>();
+        {%- for candidate in candidates %}
+        if ({{ candidate }}.matches(event)) {
+            try {
+                return Optional.<{{ union }}>of({{ candidate }}.parse(event));
+            } catch (RuntimeException e) {
+                failures.add("{{ candidate }}: " + e);
+            }
+        }
+        {%- endfor %}
+        if (!failures.isEmpty()) {
+            throw new {{ unparsed }}(
+                "event topics matched " + failures.size() + " declared event(s) but none"
+                    + " parsed successfully (" + String.join("; ", failures) + "); the"
+                    + " on-chain event format may have drifted from the spec these"
+                    + " bindings were generated from");
+        }
+        return Optional.empty();
+    }
+
+    public static Optional<{{ union }}> parseEvent(ContractEvent event) {
+        return parseEvent({{ decoded }}.of(event));
+    }
+
+    public static Optional<{{ union }}> parseEvent(GetEventsResponse.EventInfo event) {
+        return parseEvent({{ decoded }}.of(event));
+    }
+"""
+)
+
+
+def _event_params(
+    entry: xdr.SCSpecEventV0,
+    param_names: List[str],
+    prefix_topic_count: int,
+    udt_members: dict,
+) -> Tuple[List[dict], List[dict], List[str]]:
+    """Work out how each declared parameter is typed, decoded and filtered.
+
+    Returns the per-parameter render context, the subset that lands in the topic
+    list (which drives topicFilter), and the map keys a MAP-format event must
+    carry to parse.
+    """
+    event_name = entry.name.sc_symbol.decode()
+    data_format = entry.data_format
+    params: List[dict] = []
+    topic_params: List[dict] = []
+    required_data_keys: List[str] = []
+    topic_index = prefix_topic_count
+    data_index = 0
+    for param, java_name in zip(entry.params, param_names):
+        chain_name = param.name.decode()
+        _reject_unsupported_event_type(
+            param.type, event_name, chain_name, udt_members=udt_members
+        )
+        if (
+            param.location
+            == xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_TOPIC_LIST
+        ):
+            parse_expr = from_scval(param.type, f"topics.get({topic_index})")
+            topic_index += 1
+            topic_params.append(
+                {
+                    "java_name": java_name,
+                    "java_type": to_java_type(param.type),
+                    # Resolved against the field names below, so a parameter
+                    # literally called <other>Set cannot take another's flag.
+                    "set_flag": None,
+                    "filter_expr": None,
+                }
+            )
+        elif (
+            data_format
+            == xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE
+        ):
+            parse_expr = from_scval(param.type, "event.getData()")
+        elif data_format == xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_VEC:
+            parse_expr = from_scval(param.type, f"values.get({data_index})")
+            data_index += 1
+        elif data_format == xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_MAP:
+            # SEP-48 wants every declared parameter in the map, but an emitter
+            # may leave out one declared as an option: SEP-41 lets the SAC omit
+            # to_muxed_id when there is no muxed ID, and the SAC spec does
+            # declare it optional. An absent option decodes to null; an absent
+            # required entry is rejected in parse() rather than yielding a
+            # half-populated event.
+            key = java_string_literal(chain_name)
+            value_expr = f"values.get({key})"
+            if param.type.type == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
+                parse_expr = (
+                    f"values.containsKey({key}) "
+                    f"? {from_scval(param.type, value_expr)} : null"
+                )
+            else:
+                parse_expr = from_scval(param.type, value_expr)
+                required_data_keys.append(key)
+        else:
+            raise ValueError(f"Unsupported event data format: {data_format}")
+        params.append(
+            {
+                "java_name": java_name,
+                "java_type": to_java_type(param.type),
+                "parse_expr": parse_expr,
+            }
+        )
+    _allocate_topic_filter_names(topic_params, entry, param_names)
+    return params, topic_params, required_data_keys
+
+
+# Locals the generated build() method declares; a topic parameter that took one
+# of these names would be shadowed by it rather than read from the builder.
+_TOPIC_FILTER_LOCALS = frozenset({"row"})
+
+
+def _allocate_topic_filter_names(
+    topic_params: List[dict], entry: xdr.SCSpecEventV0, param_names: List[str]
+) -> None:
+    """Give each topic parameter a set-flag, and rename any that build() shadows.
+
+    The builder holds a value and a boolean per topic. Both live in one scope
+    along with build()'s locals, so all three sources have to be allocated
+    together: a parameter called ``fooSet`` would otherwise claim the flag of a
+    parameter called ``foo``, and one called ``row`` would silently read the
+    list build() is assembling.
+    """
+    used = set(param_names) | _TOPIC_FILTER_LOCALS
+    for topic in topic_params:
+        while topic["java_name"] in _TOPIC_FILTER_LOCALS:
+            topic["java_name"] += "_"
+            used.add(topic["java_name"])
+        flag = topic["java_name"] + "Set"
+        while flag in used:
+            flag += "_"
+        used.add(flag)
+        topic["set_flag"] = flag
+
+    # The filter expression names the field, so it can only be built once the
+    # renames above are settled.
+    topic_types = [
+        param
+        for param in entry.params
+        if param.location
+        == xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_TOPIC_LIST
+    ]
+    for topic, param in zip(topic_params, topic_types):
+        topic["filter_expr"] = to_scval(param.type, topic["java_name"])
+
+
+def render_event_helpers(names: dict):
+    return _EVENT_HELPERS_TEMPLATE.render(**names)
+
+
+def render_event(
+    entry: xdr.SCSpecEventV0, class_name: str, names: dict, udt_members: dict
+):
+    prefix_symbols = [s.sc_symbol.decode() for s in entry.prefix_topics]
+    data_format = entry.data_format
+    data_params = [
+        param
+        for param in entry.params
+        if param.location
+        == xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_DATA
+    ]
+    if (
+        data_format == xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE
+        and len(data_params) > 1
+    ):
+        raise ValueError(
+            "SINGLE_VALUE events may declare at most one data parameter; "
+            f"{entry.name.sc_symbol.decode()!r} declares {len(data_params)}"
+        )
+
+    param_names = resolve_event_param_names(entry)
+    params, topic_params, required_data_keys = _event_params(
+        entry, param_names, len(prefix_symbols), udt_members
+    )
+    return _EVENT_TEMPLATE.render(
+        class_name=class_name,
+        **names,
+        event_name=java_string_literal(entry.name.sc_symbol.decode()),
+        prefix_symbols=[java_string_literal(symbol) for symbol in prefix_symbols],
+        total_topics=declared_topic_count(entry),
+        params=params,
+        topic_params=topic_params,
+        has_vec_data=data_format
+        == xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_VEC,
+        has_map_data=data_format
+        == xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_MAP,
+        validate_void_data=(
+            data_format
+            == xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE
+            and not data_params
+        ),
+        required_data_keys=required_data_keys,
+        data_param_count=len(data_params),
+    )
+
+
+def render_event_dispatcher(
+    entries: List[xdr.SCSpecEventV0], class_names: List[str], names: dict
+):
+    # Most specific first, so a looser declaration cannot swallow events of a
+    # tighter one through the trailing-topic tolerance in matches().
+    #
+    # Static prefix topics come first in the key, not just the total: matches()
+    # only ever checks the prefix, so a declaration with two static topics is
+    # strictly more selective than one with a single static topic followed by a
+    # parameter, even though both declare two. Ties keep spec order, which is
+    # what separates declarations sharing a topic shape - the SAC transfer
+    # family all declare one prefix and three topics, and are told apart by
+    # which one can decode the data.
+    candidates = [
+        name
+        for _, name in sorted(
+            zip(entries, class_names),
+            key=lambda pair: (
+                -len(pair[0].prefix_topics),
+                -declared_topic_count(pair[0]),
+            ),
+        )
+    ]
+    return _EVENT_DISPATCHER_TEMPLATE.render(candidates=candidates, **names)
+
+
 def _convert(owner, attr: str = "name") -> None:
     """Rewrite a spec identifier into its Java spelling.
 
@@ -814,6 +1465,24 @@ def generate_binding(specs: List[xdr.SCSpecEntry], package: str) -> str:
         and not spec.function_v0.name.sc_symbol.decode().startswith("__")
     ]
     generated.append(render_functions(function_specs))
+
+    event_specs: List[xdr.SCSpecEventV0] = [
+        spec.event_v0
+        for spec in specs
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_EVENT_V0
+    ]
+    if event_specs:
+        helper_names, event_class_names, event_union_name = resolve_event_names(
+            specs, event_specs
+        )
+        names = dict(zip(("union", "decoded", "unparsed"), helper_names))
+        udt_members = _udt_member_types(specs)
+        generated.append(render_event_helpers(names))
+        for event_spec, event_cls_name in zip(event_specs, event_class_names):
+            generated.append(
+                render_event(event_spec, event_cls_name, names, udt_members)
+            )
+        generated.append(render_event_dispatcher(event_specs, event_class_names, names))
 
     for spec in specs:
         if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ENUM_V0:

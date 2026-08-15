@@ -253,6 +253,110 @@ class TestGeneratedJavaCompiles:
         assert "class Tuple4<" not in source
         _compile(source, classpath, tmp_path)
 
+    def test_every_event_data_format(self, classpath, tmp_path):
+        """SINGLE_VALUE, VEC and MAP take different decoding paths."""
+        topic = xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_TOPIC_LIST
+        data = xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_DATA
+        fmt = xdr.SCSpecEventDataFormat
+
+        def event(name, prefixes, params, data_format):
+            return xdr.SCSpecEntry(
+                xdr.SCSpecEntryKind.SC_SPEC_ENTRY_EVENT_V0,
+                event_v0=xdr.SCSpecEventV0(
+                    doc=b"",
+                    lib=b"",
+                    name=xdr.SCSymbol(name),
+                    prefix_topics=[xdr.SCSymbol(p) for p in prefixes],
+                    params=[
+                        xdr.SCSpecEventParamV0(doc=b"", name=n, type=t, location=loc)
+                        for n, t, loc in params
+                    ],
+                    data_format=data_format,
+                ),
+            )
+
+        specs = [
+            _struct(b"Thing", [(b"value", _u32())]),
+            event(
+                b"single",
+                [b"single"],
+                [(b"amount", _u32(), data)],
+                fmt.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE,
+            ),
+            event(b"empty", [b"empty"], [], fmt.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE),
+            event(
+                b"vec",
+                [b"vec"],
+                [
+                    (b"who", _u32(), topic),
+                    (b"a", _u32(), data),
+                    (b"b", _udt(b"Thing"), data),
+                ],
+                fmt.SC_SPEC_EVENT_DATA_FORMAT_VEC,
+            ),
+            event(
+                b"mapped",
+                [b"mapped"],
+                [
+                    (b"who", _u32(), topic),
+                    (b"required", _vec(_u32()), data),
+                    (b"optional", _option(_udt(b"Thing")), data),
+                ],
+                fmt.SC_SPEC_EVENT_DATA_FORMAT_MAP,
+            ),
+            # A parameter named after a Java keyword, and one that needs escaping.
+            event(
+                b"kw",
+                [b"kw"],
+                [(b"class", _u32(), topic), (b"new", _u32(), data)],
+                fmt.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE,
+            ),
+        ]
+        _compile(generate_binding(specs, package="com.example"), classpath, tmp_path)
+
+    def test_names_that_collide_with_generated_ones(self, classpath, tmp_path):
+        """Everything the generator emits shares one nested-class namespace."""
+        topic = xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_TOPIC_LIST
+        fmt = xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE
+
+        def event(name, prefixes, params):
+            return xdr.SCSpecEntry(
+                xdr.SCSpecEntryKind.SC_SPEC_ENTRY_EVENT_V0,
+                event_v0=xdr.SCSpecEventV0(
+                    doc=b"",
+                    lib=b"",
+                    name=xdr.SCSymbol(name),
+                    prefix_topics=[xdr.SCSymbol(p) for p in prefixes],
+                    params=[
+                        xdr.SCSpecEventParamV0(doc=b"", name=n, type=t, location=loc)
+                        for n, t, loc in params
+                    ],
+                    data_format=fmt,
+                ),
+            )
+
+        specs = [
+            # UDTs occupying the names the event scaffolding wants.
+            _struct(b"Event", [(b"v", _u32())]),
+            _struct(b"DecodedEvent", [(b"v", _u32())]),
+            _struct(b"UnparsedEventException", [(b"v", _u32())]),
+            # A UDT whose Java name differs from its declared name, referenced
+            # from both a struct field and an event parameter.
+            _struct(b"snake_type", [(b"v", _u32())]),
+            _struct(b"Holder", [(b"thing", _udt(b"snake_type"))]),
+            # Topic parameters that fight over the builder's synthetic names.
+            event(
+                b"clash",
+                [b"clash"],
+                [(b"foo", _u32(), topic), (b"foo_set", _u32(), topic)],
+            ),
+            event(b"shadow", [b"shadow"], [(b"row", _u32(), topic)]),
+            event(
+                b"udt_param", [b"udt_param"], [(b"thing", _udt(b"snake_type"), topic)]
+            ),
+        ]
+        _compile(generate_binding(specs, package="com.example"), classpath, tmp_path)
+
     def test_java_keyword_names(self, classpath, tmp_path):
         """Spec names that are Java keywords must be renamed, not emitted raw."""
         specs = [
@@ -338,13 +442,17 @@ public class LiteralRoundTrip {{
         expected = [name.encode("utf-8").hex() for name in HOSTILE_NAMES]
         assert produced == expected
 
-    def test_the_generated_source_is_pure_ascii(self, classpath, tmp_path):
-        """Non-ASCII escaped means javac's default encoding cannot change meaning."""
+    def test_every_literal_is_pure_ascii(self, classpath, tmp_path):
+        """Non-ASCII escaped means javac's -encoding cannot change a literal.
+
+        This covers the literals only. A whole generated file is not ASCII yet:
+        identifiers are still emitted from spec names without sanitising, which
+        is tracked separately.
+        """
         from stellar_contract_bindings.java import java_string_literal
 
         for name in HOSTILE_NAMES:
-            literal = java_string_literal(name)
-            assert literal.isascii(), name
+            assert java_string_literal(name).isascii(), name
 
 
 class TestGeneratedTuplesBehave:
@@ -397,6 +505,58 @@ class TestGeneratedTuplesBehave:
 
         run = subprocess.run(
             ["java", "-cp", os.pathsep.join([classpath, str(out)]), "TupleSmoke"],
+            capture_output=True,
+            text=True,
+        )
+        assert run.returncode == 0, f"{run.stdout}\n{run.stderr}"
+        assert "all checks passed" in run.stdout
+        assert "FAIL" not in run.stdout
+
+
+class TestGeneratedEventBindingsBehave:
+    """Compile the event bindings and run them against real SCVals.
+
+    Compilation proves the source is valid; it says nothing about whether the
+    decoders pick the right candidate or read the right fields. The harness in
+    tests/java/EventSmoke.java exercises the parts that only show up at runtime:
+    the four Stellar Asset Contract transfer declarations share a topic shape
+    and are separated only by the type of their data.
+    """
+
+    def test_event_smoke_harness(self, classpath, tmp_path):
+        client = tmp_path / "com" / "example" / "Client.java"
+        client.parent.mkdir(parents=True, exist_ok=True)
+        client.write_text(
+            generate_binding(get_token_sc_spec_entry(), package="com.example")
+        )
+        harness = tmp_path / "EventSmoke.java"
+        harness.write_text((_JAVA_SOURCES / "EventSmoke.java").read_text())
+
+        out = tmp_path / "out"
+        out.mkdir(exist_ok=True)
+        for source in (client, harness):
+            compiled = subprocess.run(
+                [
+                    "javac",
+                    "--release",
+                    "8",
+                    "-encoding",
+                    "UTF-8",
+                    "-cp",
+                    os.pathsep.join([classpath, str(out)]),
+                    "-processorpath",
+                    classpath,
+                    "-d",
+                    str(out),
+                    str(source),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            assert compiled.returncode == 0, f"{source.name}:\n{compiled.stderr}"
+
+        run = subprocess.run(
+            ["java", "-cp", os.pathsep.join([classpath, str(out)]), "EventSmoke"],
             capture_output=True,
             text=True,
         )

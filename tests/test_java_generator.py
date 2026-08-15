@@ -1,5 +1,7 @@
 """Tests for the Java binding generator."""
 
+import re
+
 from stellar_sdk import xdr
 
 from stellar_contract_bindings.java import generate_binding
@@ -295,3 +297,289 @@ class TestUnreachableMultiOutput:
             [_function(b"f", [(b"a", _u32())], [_u32()])], package="org.example"
         )
         assert "<function" not in generated
+
+
+def _event(
+    name: bytes,
+    prefix_topics: list[bytes],
+    params: list,
+    data_format: xdr.SCSpecEventDataFormat,
+    doc: bytes = b"",
+) -> xdr.SCSpecEntry:
+    return xdr.SCSpecEntry(
+        xdr.SCSpecEntryKind.SC_SPEC_ENTRY_EVENT_V0,
+        event_v0=xdr.SCSpecEventV0(
+            doc=doc,
+            lib=b"",
+            name=xdr.SCSymbol(name),
+            prefix_topics=[xdr.SCSymbol(t) for t in prefix_topics],
+            params=[
+                xdr.SCSpecEventParamV0(doc=b"", name=n, type=t, location=loc)
+                for n, t, loc in params
+            ],
+            data_format=data_format,
+        ),
+    )
+
+
+_TOPIC = xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_TOPIC_LIST
+_DATA = xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_DATA
+_MAP_FORMAT = xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_MAP
+_SINGLE = xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE
+
+
+class TestEventNamesAvoidCollisions:
+    """Events become nested classes of Client, alongside every UDT."""
+
+    def test_event_class_name_is_pascal_case_with_an_event_suffix(self):
+        generated = generate_binding(
+            [_event(b"set_admin", [b"set_admin"], [], _SINGLE)], package="org.example"
+        )
+        assert "public static class SetAdminEvent implements Event" in generated
+
+    def test_an_event_named_like_a_udt_is_renamed(self):
+        generated = generate_binding(
+            [
+                _struct(b"TransferEvent", [(b"v", _u32())]),
+                _event(b"transfer", [b"transfer"], [], _SINGLE),
+            ],
+            package="org.example",
+        )
+        assert "public static class TransferEvent {" in generated
+        assert "public static class TransferEvent_ implements Event" in generated
+
+    def test_a_udt_named_event_does_not_displace_the_marker_interface(self):
+        generated = generate_binding(
+            [
+                _struct(b"Event", [(b"v", _u32())]),
+                _event(b"ping", [b"ping"], [], _SINGLE),
+            ],
+            package="org.example",
+        )
+        assert "public interface Event_ {}" in generated
+        assert "class PingEvent implements Event_" in generated
+
+
+class TestEventTypesThatCannotBeDecoded:
+    """Reject at generation time rather than emitting a wrong decoder."""
+
+    def test_a_result_parameter_is_rejected(self):
+        """to_java_type reduces Result<T, E> to T, but an event may carry Err."""
+        error = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
+        spec = _event(
+            b"oops", [b"oops"], [(b"outcome", _result(_u32(), error), _DATA)], _SINGLE
+        )
+        try:
+            generate_binding([spec], package="org.example")
+        except NotImplementedError as exc:
+            assert "oops.outcome" in str(exc)
+        else:
+            raise AssertionError("expected a Result parameter to be rejected")
+
+    def test_a_result_nested_in_a_container_is_rejected(self):
+        error = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
+        nested = xdr.SCSpecTypeDef(
+            xdr.SCSpecType.SC_SPEC_TYPE_VEC,
+            vec=xdr.SCSpecTypeVec(_result(_u32(), error)),
+        )
+        spec = _event(b"oops", [b"oops"], [(b"outcomes", nested, _DATA)], _SINGLE)
+        try:
+            generate_binding([spec], package="org.example")
+        except NotImplementedError as exc:
+            assert "oops.outcomes[]" in str(exc)
+        else:
+            raise AssertionError("expected a nested Result to be rejected")
+
+
+class TestEventDispatchOrder:
+    """Most specific first, so a short declaration cannot swallow a long one."""
+
+    def test_candidates_are_ordered_by_declared_topic_count(self):
+        generated = generate_binding(
+            [
+                _event(b"short", [b"act"], [], _SINGLE),
+                _event(b"long", [b"act"], [(b"who", _u32(), _TOPIC)], _SINGLE),
+            ],
+            package="org.example",
+        )
+        dispatcher = generated[
+            generated.index("public static Optional<Event> parseEvent") :
+        ]
+        assert dispatcher.index("LongEvent.matches") < dispatcher.index(
+            "ShortEvent.matches"
+        )
+
+    def test_a_failed_candidate_does_not_stop_the_others(self):
+        """Independent ifs, not else-if: matching topics may still fail to parse."""
+        generated = generate_binding(
+            [
+                _event(b"a", [b"act"], [(b"v", _u32(), _DATA)], _SINGLE),
+                _event(b"b", [b"act"], [(b"v", _u32(), _DATA)], _SINGLE),
+            ],
+            package="org.example",
+        )
+        dispatcher = generated[
+            generated.index("public static Optional<Event> parseEvent") :
+        ]
+        assert "} else if (" not in dispatcher
+        assert dispatcher.count("catch (RuntimeException e)") == 2
+
+
+class TestEventTopicFilter:
+    """An unset topic is a wildcard; that is not the same as an explicit null."""
+
+    def setup_method(self):
+        self.generated = generate_binding(
+            [
+                _event(
+                    b"transfer",
+                    [b"transfer"],
+                    [
+                        (b"from", _type(xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS), _TOPIC),
+                        (b"amount", _u32(), _DATA),
+                    ],
+                    _MAP_FORMAT,
+                )
+            ],
+            package="org.example",
+        )
+
+    def test_set_state_is_tracked_separately_from_the_value(self):
+        assert "private boolean fromSet;" in self.generated
+        assert (
+            'row.add(fromSet ? encodeTopic(Scv.toAddress(from)) : "*");'
+            in self.generated
+        )
+
+    def test_the_row_ends_with_the_trailing_wildcard(self):
+        assert 'row.add("**");' in self.generated
+
+    def test_required_map_entries_are_checked(self):
+        assert 'values.containsKey("amount")' in self.generated
+
+
+class TestEventNameAllocationIsComplete:
+    """Every generated nested class competes for one namespace inside Client."""
+
+    def test_a_udt_named_like_a_helper_pushes_the_helper_aside(self):
+        generated = generate_binding(
+            [
+                _struct(b"DecodedEvent", [(b"v", _u32())]),
+                _event(b"ping", [b"ping"], [], _SINGLE),
+            ],
+            package="org.example",
+        )
+        assert "public static class DecodedEvent_ {" in generated
+        assert "DecodedEvent_.of(event)" in generated
+        # The contract's own type keeps its name.
+        assert "public static class DecodedEvent {" in generated
+
+    def test_a_topic_parameter_cannot_claim_another_ones_flag(self):
+        """`foo` needs a `fooSet` flag, which a parameter named `foo_set` takes."""
+        generated = generate_binding(
+            [
+                _event(
+                    b"e",
+                    [b"e"],
+                    [(b"foo", _u32(), _TOPIC), (b"foo_set", _u32(), _TOPIC)],
+                    _SINGLE,
+                )
+            ],
+            package="org.example",
+        )
+        declared = re.findall(r"private (?:Long|boolean) (\w+);", generated)
+        assert len(declared) == len(set(declared)), declared
+
+    def test_a_topic_parameter_cannot_shadow_a_builder_local(self):
+        """build() assembles a local `row`; a parameter of that name read it."""
+        generated = generate_binding(
+            [_event(b"e", [b"e"], [(b"row", _u32(), _TOPIC)], _SINGLE)],
+            package="org.example",
+        )
+        assert "encodeTopic(Scv.toUint32(row))" not in generated
+
+
+class TestEventDispatchPrefersStaticTopics:
+    """Topic count alone does not measure how selective a declaration is."""
+
+    def test_more_static_prefix_topics_wins_at_equal_total(self):
+        """matches() only checks the prefix, so more prefix is strictly tighter."""
+        generated = generate_binding(
+            [
+                _event(
+                    b"generic",
+                    [b"x"],
+                    [(b"anything", _type(xdr.SCSpecType.SC_SPEC_TYPE_VAL), _TOPIC)],
+                    _SINGLE,
+                ),
+                _event(b"specific", [b"x", b"y"], [], _SINGLE),
+            ],
+            package="org.example",
+        )
+        dispatcher = generated[
+            generated.index("public static Optional<Event> parseEvent") :
+        ]
+        assert dispatcher.index("SpecificEvent.matches") < dispatcher.index(
+            "GenericEvent.matches"
+        )
+
+
+class TestUdtReferencesMatchDeclarations:
+    """append_underscore renames the declaration; references must follow."""
+
+    def test_a_renamed_udt_is_referenced_by_its_java_name(self):
+        udt = xdr.SCSpecTypeDef(
+            xdr.SCSpecType.SC_SPEC_TYPE_UDT, udt=xdr.SCSpecTypeUDT(name=b"snake_type")
+        )
+        generated = generate_binding(
+            [
+                _struct(b"snake_type", [(b"v", _u32())]),
+                _struct(b"Holder", [(b"thing", udt)]),
+            ],
+            package="org.example",
+        )
+        assert "public static class snakeType {" in generated
+        assert "snakeType thing;" in generated
+        assert "snake_type thing;" not in generated
+
+
+class TestResultRejectionSeesThroughUdts:
+    """A UDT hides its members behind a name; the decoder has the same gap."""
+
+    def test_a_result_inside_a_referenced_struct_is_rejected(self):
+        error = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
+        box = xdr.SCSpecTypeDef(
+            xdr.SCSpecType.SC_SPEC_TYPE_UDT, udt=xdr.SCSpecTypeUDT(name=b"Box")
+        )
+        specs = [
+            _struct(b"Box", [(b"inner", _result(_u32(), error))]),
+            _event(b"boxed", [b"boxed"], [(b"payload", box, _DATA)], _SINGLE),
+        ]
+        try:
+            generate_binding(specs, package="org.example")
+        except NotImplementedError as exc:
+            assert "boxed.payload.inner" in str(exc)
+        else:
+            raise AssertionError("expected a Result behind a UDT to be rejected")
+
+    def test_a_recursive_udt_does_not_loop(self):
+        node = xdr.SCSpecTypeDef(
+            xdr.SCSpecType.SC_SPEC_TYPE_UDT, udt=xdr.SCSpecTypeUDT(name=b"Node")
+        )
+        specs = [
+            _struct(
+                b"Node",
+                [
+                    (b"value", _u32()),
+                    (
+                        b"next",
+                        xdr.SCSpecTypeDef(
+                            xdr.SCSpecType.SC_SPEC_TYPE_OPTION,
+                            option=xdr.SCSpecTypeOption(node),
+                        ),
+                    ),
+                ],
+            ),
+            _event(b"linked", [b"linked"], [(b"head", node, _DATA)], _SINGLE),
+        ]
+        generate_binding(specs, package="org.example")  # must terminate
