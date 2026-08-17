@@ -105,6 +105,16 @@ _JAVA_TYPES = {
     xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS: "Address",
 }
 
+
+def _lambda_var(depth: int) -> str:
+    """Name the lambda parameter for a collection at this nesting depth.
+
+    A nested collection puts one lambda inside another, and Java forbids
+    shadowing a lambda parameter, so every level needs its own name.
+    """
+    return f"e{depth}"
+
+
 _UNSUPPORTED_ERROR = "SC_SPEC_TYPE_ERROR is not supported"
 
 
@@ -150,7 +160,7 @@ def to_java_type(td: xdr.SCSpecTypeDef):
     raise ValueError(f"Unsupported SCValType: {t}")
 
 
-def to_scval(td: xdr.SCSpecTypeDef, name: str):
+def to_scval(td: xdr.SCSpecTypeDef, name: str, depth: int = 0):
     t = td.type
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VAL:
         return f"{name}"
@@ -161,27 +171,29 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str):
     if t in _SCV_CODECS:
         return f"Scv.to{_SCV_CODECS[t]}({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
-        return f"{name} == null ? Scv.toVoid() : {to_scval(td.option.value_type, name)}"
+        return f"{name} == null ? Scv.toVoid() : {to_scval(td.option.value_type, name, depth)}"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
         # to_java_type() and from_scval() both reduce Result<T, E> to its Ok
         # arm, so the Java value in hand is already a T and encodes as one.
-        return to_scval(td.result.ok_type, name)
+        return to_scval(td.result.ok_type, name, depth)
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
-        element = to_scval(td.vec.element_type, "e")
+        var = _lambda_var(depth)
+        element = to_scval(td.vec.element_type, var, depth + 1)
         return (
-            f"Scv.toVec({name}.stream().map(e -> {element})"
+            f"Scv.toVec({name}.stream().map({var} -> {element})"
             f".collect(Collectors.toList()))"
         )
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-        key = to_scval(td.map.key_type, "e.getKey()")
-        value = to_scval(td.map.value_type, "e.getValue()")
+        var = _lambda_var(depth)
+        key = to_scval(td.map.key_type, f"{var}.getKey()", depth + 1)
+        value = to_scval(td.map.value_type, f"{var}.getValue()", depth + 1)
         return (
             f"Scv.toMap({name}.entrySet().stream().collect(LinkedHashMap::new, "
-            f"(m, e) -> m.put({key}, {value}), LinkedHashMap::putAll))"
+            f"(m{depth}, {var}) -> m{depth}.put({key}, {value}), LinkedHashMap::putAll))"
         )
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
         values = [
-            to_scval(v, f"{name}.getValue{i}()")
+            to_scval(v, f"{name}.getValue{i}()", depth)
             for i, v in enumerate(td.tuple.value_types)
         ]
         return f"Scv.toVec(Arrays.asList({', '.join(values)}))"
@@ -190,7 +202,7 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str):
     raise ValueError(f"Unsupported SCValType: {t}")
 
 
-def from_scval(td: xdr.SCSpecTypeDef, name: str):
+def from_scval(td: xdr.SCSpecTypeDef, name: str, depth: int = 0):
     t = td.type
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VAL:
         return f"{name}"
@@ -204,28 +216,30 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str):
     if t in _SCV_CODECS:
         return f"Scv.from{_SCV_CODECS[t]}({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
-        inner = from_scval(td.option.value_type, name)
+        inner = from_scval(td.option.value_type, name, depth)
         return f"{name}.getDiscriminant() != SCValType.SCV_VOID ? {inner} : null"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
-        return from_scval(td.result.ok_type, name)
+        return from_scval(td.result.ok_type, name, depth)
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
-        element = from_scval(td.vec.element_type, "e")
+        var = _lambda_var(depth)
+        element = from_scval(td.vec.element_type, var, depth + 1)
         return (
-            f"Scv.fromVec({name}).stream().map(e -> {element})"
+            f"Scv.fromVec({name}).stream().map({var} -> {element})"
             f".collect(Collectors.toList())"
         )
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-        key = from_scval(td.map.key_type, "e.getKey()")
-        value = from_scval(td.map.value_type, "e.getValue()")
+        var = _lambda_var(depth)
+        key = from_scval(td.map.key_type, f"{var}.getKey()", depth + 1)
+        value = from_scval(td.map.value_type, f"{var}.getValue()", depth + 1)
         return (
             f"Scv.fromMap({name}).entrySet().stream().collect(LinkedHashMap::new, "
-            f"(m, e) -> m.put({key}, {value}), LinkedHashMap::putAll)"
+            f"(m{depth}, {var}) -> m{depth}.put({key}, {value}), LinkedHashMap::putAll)"
         )
     if t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
         if len(td.tuple.value_types) == 0:
             return "null"
         values = [
-            from_scval(v, f"Scv.fromVec({name}).toArray(new SCVal[0])[{i}]")
+            from_scval(v, f"Scv.fromVec({name}).toArray(new SCVal[0])[{i}]", depth)
             for i, v in enumerate(td.tuple.value_types)
         ]
         return (
@@ -271,6 +285,9 @@ import org.javatuples.Octet;
 import org.javatuples.Ennead;
 import org.javatuples.Decade;
 
+import org.stellar.sdk.Address;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
 import org.stellar.sdk.contract.AssembledTransaction;
 import org.stellar.sdk.contract.ContractClient;
 import org.stellar.sdk.scval.Scv;
