@@ -233,7 +233,7 @@ class TestClient:
 @pytest.mark.asyncio
 class TestClientAsync:
     @pytest.fixture(autouse=True)
-    def setup_method(self, event_loop):
+    def setup_method(self):
         self.client = ClientAsync(CONTRACT_ID, RPC_URL, NETWORK_PASSPHRASE)
 
     async def test_hello(self):
