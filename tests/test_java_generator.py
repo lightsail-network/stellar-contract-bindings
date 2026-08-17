@@ -222,3 +222,76 @@ class TestSpecDerivedLiteralsAreEscaped:
         assert '"\\u4e2d\\u6587"' in generated
         literals = [line for line in generated.split("\n") if "fields.put" in line]
         assert literals and all("\u4e2d" not in line.split(",")[0] for line in literals)
+
+
+def _tuple(count: int) -> xdr.SCSpecTypeDef:
+    return xdr.SCSpecTypeDef(
+        xdr.SCSpecType.SC_SPEC_TYPE_TUPLE,
+        tuple=xdr.SCSpecTypeTuple([_u32()] * count),
+    )
+
+
+class TestGeneratedTupleClasses:
+    """Java has no tuple type, so the generator emits its own instead of
+    making every consumer depend on javatuples."""
+
+    def test_no_javatuples_anywhere(self):
+        generated = generate_binding(
+            [_struct(b"Holder", [(b"pair", _tuple(2))])], package="org.example"
+        )
+        assert "javatuples" not in generated
+
+    def test_only_the_arities_in_use_are_emitted(self):
+        generated = generate_binding(
+            [_struct(b"Holder", [(b"a", _tuple(2)), (b"b", _tuple(5))])],
+            package="org.example",
+        )
+        assert "public static class Tuple2<T0, T1> {" in generated
+        assert "public static class Tuple5<" in generated
+        for unused in (1, 3, 4, 6, 12):
+            assert f"class Tuple{unused}<" not in generated
+
+    def test_a_contract_with_no_tuples_gets_no_tuple_classes(self):
+        generated = generate_binding(
+            [_struct(b"Plain", [(b"v", _u32())])], package="org.example"
+        )
+        assert "class Tuple" not in generated
+
+    def test_the_spec_maximum_of_twelve_is_supported(self):
+        """SCSpecTypeTuple declares valueTypes<12>; javatuples stopped at ten."""
+        generated = generate_binding(
+            [_struct(b"Wide", [(b"v", _tuple(12))])], package="org.example"
+        )
+        assert "public static class Tuple12<" in generated
+        assert "Tuple12<Long, Long, Long, Long, Long, Long," in generated
+
+    def test_a_union_case_of_one_value_needs_no_tuple(self):
+        generated = generate_binding(
+            [_union(b"Choice", [_tuple_case(b"one", _u32())])], package="org.example"
+        )
+        assert "class Tuple" not in generated
+
+    def test_a_udt_colliding_with_a_tuple_class_is_reported(self):
+        """Both are nested in Client, so one would be emitted twice."""
+        try:
+            generate_binding(
+                [
+                    _struct(b"Tuple2", [(b"v", _u32())]),
+                    _struct(b"Holder", [(b"pair", _tuple(2))]),
+                ],
+                package="org.example",
+            )
+        except NotImplementedError as exc:
+            assert "Tuple2" in str(exc)
+        else:
+            raise AssertionError("expected the collision to be reported")
+
+
+class TestUnreachableMultiOutput:
+    """SCSpecFunctionV0 declares outputs<1>, so more than one is impossible."""
+
+    def test_no_function_object_can_leak_into_the_source(self):
+        generated = generate_binding(
+            [_function(b"f", [(b"a", _u32())], [_u32()])], package="org.example"
+        )
+        assert "<function" not in generated

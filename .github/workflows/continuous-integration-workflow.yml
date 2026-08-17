@@ -84,7 +84,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/stellar-contract-bindings/jars
-          key: java-jars-lombok1.18.34-javatuples1.2-stellarsdk4.0.1
+          key: java-jars-lombok1.18.34-stellarsdk4.0.1-gson2.14.0-bcprov1.84-codec1.22.0
 
       - name: Compile the generated Java bindings
         env:
