@@ -92,21 +92,15 @@ def convert_name(text: bytes, first_letter_lower=False) -> bytes:
     return text.encode()
 
 
+# SCSpecTypeTuple declares valueTypes<12>, so twelve is the most a spec can
+# hold. The previous javatuples mapping stopped at ten.
+_MAX_TUPLE_ARITY = 12
+
+
 def get_tuple_class_name(amount: int) -> str:
-    if amount < 1 or amount > 10:
-        raise ValueError("amount should be between 1 and 10")
-    return [
-        "Unit",
-        "Pair",
-        "Triplet",
-        "Quartet",
-        "Quintet",
-        "Sextet",
-        "Septet",
-        "Octet",
-        "Ennead",
-        "Decade",
-    ][amount - 1]
+    if amount < 1 or amount > _MAX_TUPLE_ARITY:
+        raise ValueError(f"amount should be between 1 and {_MAX_TUPLE_ARITY}")
+    return f"Tuple{amount}"
 
 
 # Scalar SCSpecTypes whose Scv helpers are named symmetrically, so that
@@ -315,6 +309,101 @@ _ENV.globals.update(
 )
 
 
+_TUPLE_CLASS_TEMPLATE = _template(
+    """
+    /** A {{ arity }}-element tuple, for a spec type Java has no equivalent of. */
+    @Value
+    public static class {{ get_tuple_class_name(arity) }}<{% for i in range(arity) %}T{{ i }}{% if not loop.last %}, {% endif %}{% endfor %}> {
+        {%- for i in range(arity) %}
+        T{{ i }} value{{ i }};
+        {%- endfor %}
+    }
+"""
+)
+
+
+def _tuple_arities(specs: List[xdr.SCSpecEntry]) -> List[int]:
+    """Collect every tuple size the spec actually uses.
+
+    Only the sizes in use are emitted, so a contract with no tuples carries no
+    tuple classes at all.
+    """
+    arities = set()
+
+    def walk(td: xdr.SCSpecTypeDef) -> None:
+        t = td.type
+        if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
+            walk(td.option.value_type)
+        elif t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
+            walk(td.result.ok_type)
+        elif t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
+            walk(td.vec.element_type)
+        elif t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
+            walk(td.map.key_type)
+            walk(td.map.value_type)
+        elif t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
+            # An empty tuple maps to Void, so it needs no class.
+            if td.tuple.value_types:
+                arities.add(len(td.tuple.value_types))
+            for value_type in td.tuple.value_types:
+                walk(value_type)
+
+    for spec in specs:
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0:
+            for param in spec.function_v0.inputs:
+                walk(param.type)
+            for output in spec.function_v0.outputs:
+                walk(output)
+        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0:
+            for field in spec.udt_struct_v0.fields:
+                walk(field.type)
+        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
+            for case in spec.udt_union_v0.cases:
+                if case.tuple_case is None:
+                    continue
+                # A single-value case is emitted as that value's type; only a
+                # multi-value case needs a tuple.
+                if len(case.tuple_case.type) > 1:
+                    arities.add(len(case.tuple_case.type))
+                for value_type in case.tuple_case.type:
+                    walk(value_type)
+        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_EVENT_V0:
+            for param in spec.event_v0.params:
+                walk(param.type)
+    return sorted(arities)
+
+
+def render_tuple_classes(specs: List[xdr.SCSpecEntry]) -> str:
+    """Emit the tuple classes this spec needs, checking none is displaced.
+
+    They are nested in Client alongside every UDT, so a contract type of the
+    same name would be emitted twice under one name; that is reported rather
+    than producing a file which does not compile.
+    """
+    arities = _tuple_arities(specs)
+    if not arities:
+        return ""
+    wanted = {get_tuple_class_name(arity) for arity in arities}
+    declared = {
+        convert_name(getattr(spec, attr).name).decode()
+        for spec in specs
+        for kind, attr in (
+            (xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ENUM_V0, "udt_enum_v0"),
+            (xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ERROR_ENUM_V0, "udt_error_enum_v0"),
+            (xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0, "udt_struct_v0"),
+            (xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0, "udt_union_v0"),
+        )
+        if spec.kind == kind
+    }
+    clash = sorted(wanted & declared)
+    if clash:
+        raise NotImplementedError(
+            f"contract declares {', '.join(clash)}, which collides with the "
+            f"tuple class the generator needs for the same arity"
+        )
+    return "\n".join(_TUPLE_CLASS_TEMPLATE.render(arity=arity) for arity in arities)
+
+
 _IMPORTS_TEMPLATE = _template(
     """
 // https://mvnrepository.com/artifact/org.projectlombok/lombok
@@ -322,18 +411,6 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Value;
-
-// https://mvnrepository.com/artifact/org.javatuples/javatuples
-import org.javatuples.Unit;
-import org.javatuples.Pair;
-import org.javatuples.Triplet;
-import org.javatuples.Quartet;
-import org.javatuples.Quintet;
-import org.javatuples.Sextet;
-import org.javatuples.Septet;
-import org.javatuples.Octet;
-import org.javatuples.Ennead;
-import org.javatuples.Decade;
 
 import org.stellar.sdk.Address;
 import org.stellar.sdk.KeyPair;
@@ -644,7 +721,12 @@ def render_functions(entries: List[xdr.SCSpecFunctionV0]):
         elif len(output) == 1:
             return to_java_type(output[0])
         else:
-            return f"{get_tuple_class_name}<{', '.join([to_java_type(t) for t in output])}>"
+            # Unreachable: SCSpecFunctionV0 declares outputs<1>. The sibling
+            # parse_result_xdr_fn already raises here; this used to interpolate
+            # the function object itself into the generated source.
+            raise NotImplementedError(
+                "Tuple return type is not supported, please report this issue"
+            )
 
     def parse_result_xdr_fn(output: List[xdr.SCSpecTypeDef]):
         if len(output) == 0:
@@ -723,6 +805,7 @@ def generate_binding(specs: List[xdr.SCSpecEntry], package: str) -> str:
     generated.append(f"package {package};")
     generated.append(render_imports(package))
     generated.append("public class Client extends ContractClient {")
+    generated.append(render_tuple_classes(specs))
 
     function_specs: List[xdr.SCSpecFunctionV0] = [
         spec.function_v0
