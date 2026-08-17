@@ -23,6 +23,31 @@ def _tuple_case(name: bytes, *types: xdr.SCSpecTypeDef) -> xdr.SCSpecUDTUnionCas
     )
 
 
+def _u32() -> xdr.SCSpecTypeDef:
+    return _type(xdr.SCSpecType.SC_SPEC_TYPE_U32)
+
+
+def _union(name: bytes, cases: list) -> xdr.SCSpecEntry:
+    return xdr.SCSpecEntry(
+        xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0,
+        udt_union_v0=xdr.SCSpecUDTUnionV0(doc=b"", lib=b"", name=name, cases=cases),
+    )
+
+
+def _function(name: bytes, inputs: list, outputs: list) -> xdr.SCSpecEntry:
+    return xdr.SCSpecEntry(
+        xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0,
+        function_v0=xdr.SCSpecFunctionV0(
+            doc=b"",
+            name=xdr.SCSymbol(name),
+            inputs=[
+                xdr.SCSpecFunctionInputV0(doc=b"", name=n, type=t) for n, t in inputs
+            ],
+            outputs=outputs,
+        ),
+    )
+
+
 class TestUnionKindWireNames:
     """``Kind`` carries the on-chain case name, not the Java identifier.
 
@@ -59,7 +84,9 @@ class TestUnionKindWireNames:
         assert 'plain("plain")' in self.generated
 
 
-def _struct(name: bytes, fields: list[tuple[bytes, xdr.SCSpecTypeDef]]) -> xdr.SCSpecEntry:
+def _struct(
+    name: bytes, fields: list[tuple[bytes, xdr.SCSpecTypeDef]]
+) -> xdr.SCSpecEntry:
     return xdr.SCSpecEntry(
         xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0,
         udt_struct_v0=xdr.SCSpecUDTStructV0(
@@ -109,12 +136,12 @@ class TestResultValuesEncode:
 
 
 class TestVoidValuesDecode:
-    """A void field decodes to null.
+    """A void field decodes to null, after checking the SCVal really is void.
 
     `Scv.fromVoid` is declared `void fromVoid(SCVal)`: it takes an argument and
     returns nothing, so `Scv.fromVoid()` neither compiles nor can stand where a
-    value is expected. to_java_type() maps void to Void, whose only value is
-    null.
+    value is expected. The generated `decodeVoid` wraps it, keeping the check
+    while yielding the null that `to_java_type`'s `Void` mapping needs.
     """
 
     def setup_method(self):
@@ -134,7 +161,64 @@ class TestVoidValuesDecode:
     def test_encoding_still_uses_to_void(self):
         assert 'fields.put("v", Scv.toVoid());' in self.generated
 
-    def test_decoding_emits_null_not_a_bare_from_void_call(self):
+    def test_decoding_never_emits_a_bare_from_void_call(self):
+        """`Scv.fromVoid()` with no argument does not compile."""
         assert "Scv.fromVoid()" not in self.generated
-        constructor = self.generated[self.generated.index("public static HasVoid fromSCVal") :]
-        assert "null," in constructor
+
+    def test_decoding_validates_rather_than_assuming_void(self):
+        """A bare `null` would accept any SCVal as a declared void."""
+        constructor = self.generated[
+            self.generated.index("public static HasVoid fromSCVal") :
+        ]
+        assert "decodeVoid(" in constructor
+        assert "null," not in constructor
+
+    def test_the_void_helper_is_emitted_once(self):
+        assert self.generated.count("private static Void decodeVoid(SCVal scVal)") == 1
+
+
+class TestSpecDerivedLiteralsAreEscaped:
+    """Wire names reach the generated source as Java string literals.
+
+    They come from the contract spec, so a name containing a quote would close
+    the literal and let the rest of the name be compiled as code.
+    """
+
+    def test_struct_field_wire_name_cannot_close_the_literal(self):
+        generated = generate_binding(
+            [_struct(b"Hostile", [(b'a", Scv.toSymbol("x', _u32())])],
+            package="org.example",
+        )
+        assert 'fields.put("a\\", Scv.toSymbol(\\"x"' in generated
+        assert 'fields.put("a", Scv.toSymbol("x"' not in generated
+
+    def test_function_wire_name_cannot_close_the_literal(self):
+        generated = generate_binding(
+            [_function(b'go", null); //', [], [])], package="org.example"
+        )
+        assert 'invoke("go\\", null); //"' in generated
+
+    def test_union_case_wire_name_cannot_close_the_literal(self):
+        generated = generate_binding(
+            [_union(b"Hostile", [_void_case(b'a", "b')])], package="org.example"
+        )
+        assert '("a\\", \\"b")' in generated
+
+    def test_non_ascii_wire_names_are_escaped(self):
+        """Escaping non-ASCII keeps a literal's meaning independent of encoding.
+
+        Generated files land in a build whose javac -encoding this generator
+        does not control, and the platform default is not UTF-8 everywhere.
+
+        Only the literal is covered here. The same name is also emitted as a
+        Java identifier, which this generator does not yet sanitise; that is a
+        compile failure rather than an injection, and is left for the identifier
+        work.
+        """
+        generated = generate_binding(
+            [_struct(b"Unicode", [("中文".encode(), _u32())])],
+            package="org.example",
+        )
+        assert '"\\u4e2d\\u6587"' in generated
+        literals = [line for line in generated.split("\n") if "fields.put" in line]
+        assert literals and all("\u4e2d" not in line.split(",")[0] for line in literals)

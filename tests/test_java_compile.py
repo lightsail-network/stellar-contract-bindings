@@ -193,3 +193,88 @@ class TestGeneratedJavaCompiles:
             _function(b"switch", [(b"final", _u32()), (b"void", _u32())], []),
         ]
         _compile(generate_binding(specs, package="com.example"), classpath, tmp_path)
+
+
+# Text a contract could publish as a name. Each one either ends a Java string
+# literal, assembles an escape out of the characters that follow, or depends on
+# the encoding javac reads the file with.
+HOSTILE_NAMES = [
+    "plain",
+    'a", Scv.toSymbol("x',  # closes the literal and injects a call
+    'ends with a quote "',
+    "trailing backslash \\",
+    "a\\nb",  # a literal backslash-n, which must not become a newline
+    "\\u0022",  # a unicode escape for the quote: processed before lexing
+    "\\\\u0022",
+    "newline\nhere",
+    "carriage\r\nreturn",
+    "tab\there",
+    "bell\x07and\x00nul",
+    "delete\x7f",
+    "中文名字",
+    "emoji \U0001f48e",
+    "combining é",
+    "*/ still a comment breaker",
+    "'single' quotes",
+]
+
+
+class TestJavaStringLiteralRoundTrips:
+    """Whatever a contract publishes, the literal must evaluate back to it.
+
+    Python can check this with ast.literal_eval; Java has no such function, so
+    the check is the real thing: compile the literals and run the class, then
+    compare the bytes the JVM actually produced.
+    """
+
+    def test_every_hostile_name_survives_compilation(self, classpath, tmp_path):
+        from stellar_contract_bindings.java import java_string_literal
+
+        literals = ",\n            ".join(java_string_literal(n) for n in HOSTILE_NAMES)
+        source = f"""
+import java.nio.charset.StandardCharsets;
+
+public class LiteralRoundTrip {{
+    public static void main(String[] args) {{
+        String[] values = {{
+            {literals}
+        }};
+        StringBuilder out = new StringBuilder();
+        for (String value : values) {{
+            for (byte b : value.getBytes(StandardCharsets.UTF_8)) {{
+                out.append(String.format("%02x", b));
+            }}
+            out.append('\\n');
+        }}
+        System.out.print(out);
+    }}
+}}
+"""
+        src = tmp_path / "LiteralRoundTrip.java"
+        src.write_text(source)
+        out = tmp_path / "out"
+        out.mkdir(exist_ok=True)
+        compiled = subprocess.run(
+            ["javac", "--release", "8", "-d", str(out), str(src)],
+            capture_output=True,
+            text=True,
+        )
+        assert compiled.returncode == 0, f"did not compile:\n{compiled.stderr}"
+
+        run = subprocess.run(
+            ["java", "-cp", str(out), "LiteralRoundTrip"],
+            capture_output=True,
+            text=True,
+        )
+        assert run.returncode == 0, run.stderr
+        produced = run.stdout.strip().split("\n")
+        expected = [name.encode("utf-8").hex() for name in HOSTILE_NAMES]
+        assert produced == expected
+
+    def test_the_generated_source_is_pure_ascii(self, classpath, tmp_path):
+        """Non-ASCII escaped means javac's default encoding cannot change meaning."""
+        from stellar_contract_bindings.java import java_string_literal
+
+        for name in HOSTILE_NAMES:
+            literal = java_string_literal(name)
+            assert literal.isascii(), name
