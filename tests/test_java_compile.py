@@ -108,6 +108,96 @@ def _compile(source: str, classpath: str, tmp_path: Path) -> None:
         )
 
 
+def _run_harness(source: str, harness: str, classpath: str, tmp_path: Path) -> None:
+    """Compile generated bindings with a harness beside them, and run it.
+
+    Compilation proves the source is valid; it says nothing about whether the
+    decoders read the right values. Each harness prints one line per check and
+    ends with a summary line.
+    """
+    client = tmp_path / "com" / "example" / "Client.java"
+    client.parent.mkdir(parents=True, exist_ok=True)
+    client.write_text(source)
+    harness_path = tmp_path / f"{harness}.java"
+    harness_path.write_text((_JAVA_SOURCES / f"{harness}.java").read_text())
+
+    out = tmp_path / "out"
+    out.mkdir(exist_ok=True)
+    for path in (client, harness_path):
+        compiled = subprocess.run(
+            [
+                "javac",
+                "--release",
+                "8",
+                "-encoding",
+                "UTF-8",
+                "-cp",
+                os.pathsep.join([classpath, str(out)]),
+                "-processorpath",
+                classpath,
+                "-d",
+                str(out),
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert compiled.returncode == 0, f"{path.name}:\n{compiled.stderr}"
+
+    run = subprocess.run(
+        ["java", "-cp", os.pathsep.join([classpath, str(out)]), harness],
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, f"{run.stdout}\n{run.stderr}"
+    assert "all checks passed" in run.stdout
+    assert "FAIL" not in run.stdout
+
+
+_TOPIC = xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_TOPIC_LIST
+_DATA = xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_DATA
+_SINGLE = xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_SINGLE_VALUE
+
+
+def _result(ok: xdr.SCSpecTypeDef, err: xdr.SCSpecTypeDef) -> xdr.SCSpecTypeDef:
+    return xdr.SCSpecTypeDef(
+        xdr.SCSpecType.SC_SPEC_TYPE_RESULT,
+        result=xdr.SCSpecTypeResult(ok_type=ok, error_type=err),
+    )
+
+
+def _error_enum(name: bytes, cases: list) -> xdr.SCSpecEntry:
+    return xdr.SCSpecEntry(
+        xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ERROR_ENUM_V0,
+        udt_error_enum_v0=xdr.SCSpecUDTErrorEnumV0(
+            doc=b"",
+            lib=b"",
+            name=name,
+            cases=[
+                xdr.SCSpecUDTErrorEnumCaseV0(doc=b"", name=n, value=xdr.Uint32(v))
+                for n, v in cases
+            ],
+        ),
+    )
+
+
+def _event(name: bytes, prefixes: list, params: list, data_format) -> xdr.SCSpecEntry:
+    return xdr.SCSpecEntry(
+        xdr.SCSpecEntryKind.SC_SPEC_ENTRY_EVENT_V0,
+        event_v0=xdr.SCSpecEventV0(
+            doc=b"",
+            lib=b"",
+            name=xdr.SCSymbol(name),
+            prefix_topics=[xdr.SCSymbol(p) for p in prefixes],
+            params=[
+                xdr.SCSpecEventParamV0(doc=b"", name=n, type=t, location=loc)
+                for n, t, loc in params
+            ],
+            data_format=data_format,
+        ),
+    )
+
+
 def _type(t: xdr.SCSpecType) -> xdr.SCSpecTypeDef:
     return xdr.SCSpecTypeDef(t)
 
@@ -131,6 +221,13 @@ def _vec(inner: xdr.SCSpecTypeDef) -> xdr.SCSpecTypeDef:
 def _map(key: xdr.SCSpecTypeDef, value: xdr.SCSpecTypeDef) -> xdr.SCSpecTypeDef:
     return xdr.SCSpecTypeDef(
         xdr.SCSpecType.SC_SPEC_TYPE_MAP, map=xdr.SCSpecTypeMap(key, value)
+    )
+
+
+def _tuple(*types: xdr.SCSpecTypeDef) -> xdr.SCSpecTypeDef:
+    return xdr.SCSpecTypeDef(
+        xdr.SCSpecType.SC_SPEC_TYPE_TUPLE,
+        tuple=xdr.SCSpecTypeTuple(list(types)),
     )
 
 
@@ -351,11 +448,93 @@ class TestGeneratedJavaCompiles:
                 [(b"foo", _u32(), topic), (b"foo_set", _u32(), topic)],
             ),
             event(b"shadow", [b"shadow"], [(b"row", _u32(), topic)]),
+            # ... and one where the rename build() forces lands on a sibling.
+            event(
+                b"shadow_pair",
+                [b"shadow_pair"],
+                [(b"row", _u32(), topic), (b"row_", _u32(), topic)],
+            ),
+            # A name the spec is free to leave empty, and one Java reserves.
+            event(b"unnamed", [b"unnamed"], [(b"", _u32(), topic)]),
+            event(b"underscore", [b"underscore"], [(b"_", _u32(), topic)]),
             event(
                 b"udt_param", [b"udt_param"], [(b"thing", _udt(b"snake_type"), topic)]
             ),
         ]
         _compile(generate_binding(specs, package="com.example"), classpath, tmp_path)
+
+    def test_udts_named_after_the_sdk_types_the_generator_emits(
+        self, classpath, tmp_path
+    ):
+        """A UDT is nested in Client, so it shadows a same-named import.
+
+        Only the names this generator introduced are covered. The ones it has
+        always emitted unqualified - ``Address``, ``SCVal``, ``Scv``, ``@Value``
+        and the rest - are still exposed; see TODO.md item 4.
+        """
+        error = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
+        specs = [
+            _error_enum(b"SCError", [(b"Bad", 7)]),
+            _struct(b"SCErrorType", [(b"v", _u32())]),
+            _struct(b"Uint32", [(b"v", _u32())]),
+            _struct(b"XdrUnsignedInteger", [(b"v", _u32())]),
+            _function(b"f", [], [_result(_u32(), _udt(b"SCError"))]),
+            # A genuinely Error-typed parameter, and a Result-typed one, so the
+            # displaced names are reached through every path that emits them.
+            _event(b"boom", [b"boom"], [(b"why", error, _DATA)], _SINGLE),
+            _struct(b"Holder", [(b"r", _result(_u32(), _udt(b"SCError")))]),
+        ]
+        _compile(generate_binding(specs, package="com.example"), classpath, tmp_path)
+
+    def test_udts_named_after_the_lombok_names_the_result_class_uses(
+        self, classpath, tmp_path
+    ):
+        """The Result class names its own annotations in full.
+
+        The spec deliberately declares no enum: the enum templates have always
+        emitted a bare ``@AllArgsConstructor``, so one here would re-trigger
+        that pre-existing collision rather than test this one.
+        """
+        error = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
+        specs = [
+            _struct(b"AllArgsConstructor", [(b"v", _u32())]),
+            _struct(b"AccessLevel", [(b"v", _u32())]),
+            _struct(b"Holder", [(b"r", _result(_u32(), error))]),
+        ]
+        _compile(generate_binding(specs, package="com.example"), classpath, tmp_path)
+
+    def test_results_in_every_awkward_position(self, classpath, tmp_path):
+        """Explicit type witnesses and Java 8 ternaries, in the hard shapes."""
+        err = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
+        code = _udt(b"Code")
+        u32 = _u32()
+        specs = [
+            _error_enum(b"Code", [(b"Bad", 7)]),
+            _struct(b"Thing", [(b"v", u32)]),
+            # byte[] and Void as type arguments.
+            _struct(
+                b"A", [(b"r", _result(_type(xdr.SCSpecType.SC_SPEC_TYPE_BYTES), err))]
+            ),
+            _struct(
+                b"B", [(b"r", _result(_type(xdr.SCSpecType.SC_SPEC_TYPE_VOID), code))]
+            ),
+            # A UDT on the Ok arm.
+            _struct(b"C", [(b"r", _result(_udt(b"Thing"), code))]),
+            # A Result inside each container, and interleaved with Option.
+            _struct(b"D", [(b"r", _vec(_result(u32, code)))]),
+            _struct(b"E", [(b"r", _map(u32, _result(u32, code)))]),
+            _struct(b"F", [(b"r", _tuple(_result(u32, code), u32))]),
+            _struct(b"G", [(b"r", _option(_result(u32, code)))]),
+            _struct(b"H", [(b"r", _result(_option(u32), code))]),
+            _struct(b"I", [(b"r", _result(_result(u32, code), err))]),
+            # A Result as a function input, and as an output that stays unwrapped.
+            _function(b"take", [(b"r", _result(u32, code))], []),
+            _function(b"give", [], [_result(u32, code)]),
+        ]
+        source = generate_binding(specs, package="com.example")
+        assert "AssembledTransaction<Long> give(" in source
+        assert "take(Result<Long, Code> r," in source
+        _compile(source, classpath, tmp_path)
 
     def test_java_keyword_names(self, classpath, tmp_path):
         """Spec names that are Java keywords must be renamed, not emitted raw."""
@@ -524,42 +703,33 @@ class TestGeneratedEventBindingsBehave:
     """
 
     def test_event_smoke_harness(self, classpath, tmp_path):
-        client = tmp_path / "com" / "example" / "Client.java"
-        client.parent.mkdir(parents=True, exist_ok=True)
-        client.write_text(
-            generate_binding(get_token_sc_spec_entry(), package="com.example")
+        _run_harness(
+            generate_binding(get_token_sc_spec_entry(), package="com.example"),
+            "EventSmoke",
+            classpath,
+            tmp_path,
         )
-        harness = tmp_path / "EventSmoke.java"
-        harness.write_text((_JAVA_SOURCES / "EventSmoke.java").read_text())
 
-        out = tmp_path / "out"
-        out.mkdir(exist_ok=True)
-        for source in (client, harness):
-            compiled = subprocess.run(
-                [
-                    "javac",
-                    "--release",
-                    "8",
-                    "-encoding",
-                    "UTF-8",
-                    "-cp",
-                    os.pathsep.join([classpath, str(out)]),
-                    "-processorpath",
-                    classpath,
-                    "-d",
-                    str(out),
-                    str(source),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            assert compiled.returncode == 0, f"{source.name}:\n{compiled.stderr}"
-
-        run = subprocess.run(
-            ["java", "-cp", os.pathsep.join([classpath, str(out)]), "EventSmoke"],
-            capture_output=True,
-            text=True,
+    def test_result_smoke_harness(self, classpath, tmp_path):
+        """Result, SCError and error enums, which the SAC spec does not use."""
+        error = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
+        code = _udt(b"Code")
+        specs = [
+            _error_enum(b"Code", [(b"Bad", 7)]),
+            _struct(b"Wrapper", [(b"r", _result(_u32(), code))]),
+            _event(
+                b"outcome",
+                [b"outcome"],
+                [(b"r", _result(_u32(), code), _DATA)],
+                _SINGLE,
+            ),
+            _event(b"raw", [b"raw"], [(b"why", error, _DATA)], _SINGLE),
+            # A function returning Result keeps its unwrapped signature.
+            _function(b"get", [], [_result(_u32(), code)]),
+        ]
+        _run_harness(
+            generate_binding(specs, package="com.example"),
+            "ResultSmoke",
+            classpath,
+            tmp_path,
         )
-        assert run.returncode == 0, f"{run.stdout}\n{run.stderr}"
-        assert "all checks passed" in run.stdout
-        assert "FAIL" not in run.stdout

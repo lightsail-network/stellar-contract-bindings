@@ -88,6 +88,39 @@ public class EventSmoke {
                               Scv.toAddress(new Address(B)), Scv.toString("USDC:GA...")),
                 Scv.toInt128(BigInteger.TEN))).isPresent());
 
+        // VEC data is exact: Approve declares [amount, expiration_ledger].
+        Client.DecodedEvent approve = new Client.DecodedEvent(
+            Arrays.asList(Scv.toSymbol("approve"), Scv.toAddress(new Address(A)),
+                          Scv.toAddress(new Address(B))),
+            Scv.toVec(Arrays.asList(
+                Scv.toInt128(BigInteger.valueOf(90)), Scv.toUint32(1234))));
+        Client.ApproveEvent a = (Client.ApproveEvent) Client.parseEvent(approve).get();
+        check("vec data decoded", a.getAmount().equals(BigInteger.valueOf(90))
+            && a.getExpirationLedger() == 1234L);
+
+        // One value too many is drift, not an event to decode from a prefix of.
+        boolean tooMany = false;
+        try {
+            Client.parseEvent(new Client.DecodedEvent(
+                approve.getTopics(),
+                Scv.toVec(Arrays.asList(
+                    Scv.toInt128(BigInteger.valueOf(90)), Scv.toUint32(1234),
+                    Scv.toSymbol("surplus")))));
+        } catch (Client.UnparsedEventException e) {
+            tooMany = true;
+        }
+        check("surplus vec value rejected", tooMany);
+
+        boolean tooFew = false;
+        try {
+            Client.parseEvent(new Client.DecodedEvent(
+                approve.getTopics(),
+                Scv.toVec(Arrays.asList(Scv.toInt128(BigInteger.valueOf(90))))));
+        } catch (Client.UnparsedEventException e) {
+            tooFew = true;
+        }
+        check("short vec rejected", tooFew);
+
         // topicFilter: unset topics become wildcards, the row ends with "**".
         List<String> row = Client.TransferEvent.topicFilter().to(new Address(B)).build();
         check("filter row length", row.size() == 4);

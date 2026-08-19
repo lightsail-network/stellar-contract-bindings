@@ -12,6 +12,8 @@ from stellar_contract_bindings.utils import get_specs_by_contract_id
 
 
 # https://docs.oracle.com/javase/specs/jls/se21/html/jls-3.html#jls-3.9
+# The lone underscore on the last line is a keyword too, from Java 9 on;
+# java_identifier() lands on it for a name that is empty or wholly unusable.
 _JAVA_KEYWORDS = frozenset(
     """
     abstract assert boolean break byte case catch char class const continue
@@ -19,6 +21,7 @@ _JAVA_KEYWORDS = frozenset(
     implements import instanceof int interface long native new package private
     protected public return short static strictfp super switch synchronized
     this throw throws transient try void volatile while true false null
+    _
     """.split()
 )
 
@@ -83,7 +86,10 @@ def is_tuple_struct(entry: xdr.SCSpecUDTStructV0) -> bool:
 
 def convert_name(text: bytes, first_letter_lower=False) -> bytes:
     text = text.decode()
-    if first_letter_lower:
+    # Spec names are only length-limited, so an empty one is legal; lowering its
+    # first letter would index past the end. java_identifier() turns whatever is
+    # left into something Java accepts.
+    if first_letter_lower and text:
         text = text[0].lower() + text[1:]
     # Convert snake_case to camelCase
     text = re.sub(r"_([a-z])", lambda match: match.group(1).upper(), text)
@@ -202,81 +208,6 @@ def resolve_event_param_names(entry: xdr.SCSpecEventV0) -> List[str]:
     return names
 
 
-def _udt_member_types(specs: List[xdr.SCSpecEntry]) -> dict:
-    """Map each UDT's declared name to the types it holds.
-
-    Needed to look past a UDT reference: a struct field or union case can be a
-    type an event must not carry, and the reference alone does not show it.
-    """
-    members: dict = {}
-    for spec in specs:
-        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0:
-            entry = spec.udt_struct_v0
-            members[entry.name.decode()] = [
-                (field.name.decode(), field.type) for field in entry.fields
-            ]
-        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
-            entry = spec.udt_union_v0
-            cases = []
-            for case in entry.cases:
-                if case.tuple_case is not None:
-                    for index, value_type in enumerate(case.tuple_case.type):
-                        cases.append(
-                            (f"{case.tuple_case.name.decode()}.{index}", value_type)
-                        )
-            members[entry.name.decode()] = cases
-    return members
-
-
-def _reject_unsupported_event_type(
-    td: xdr.SCSpecTypeDef,
-    event: str,
-    param: str,
-    path: str = "",
-    udt_members: dict = None,
-    seen: frozenset = frozenset(),
-) -> None:
-    """Refuse to generate an event field this generator cannot decode faithfully.
-
-    ``to_java_type`` reduces ``Result<T, E>`` to ``T``, which is defensible for a
-    successful function result but not for an event: an event may carry the Err
-    arm, and the generated decoder would read it as an Ok. ``Error`` has no Java
-    representation here at all. Both are rejected with the path that reached
-    them rather than silently mis-decoding.
-    """
-    t = td.type
-    if t in (xdr.SCSpecType.SC_SPEC_TYPE_ERROR, xdr.SCSpecType.SC_SPEC_TYPE_RESULT):
-        where = f"{event}.{param}{path}"
-        raise NotImplementedError(
-            f"event parameter {where} is declared {t.name}, which the Java "
-            f"generator cannot decode; only the Ok arm would be read"
-        )
-
-    def recur(inner, suffix, seen=seen):
-        _reject_unsupported_event_type(
-            inner, event, param, path + suffix, udt_members, seen
-        )
-
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
-        recur(td.option.value_type, "?")
-    elif t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
-        recur(td.vec.element_type, "[]")
-    elif t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-        recur(td.map.key_type, ".key")
-        recur(td.map.value_type, ".value")
-    elif t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
-        for index, value_type in enumerate(td.tuple.value_types):
-            recur(value_type, f".{index}")
-    elif t == xdr.SCSpecType.SC_SPEC_TYPE_UDT and udt_members is not None:
-        # A UDT hides its members behind a name, and its generated decoder has
-        # the same blind spot as an inline one would. Recursive types are
-        # possible, so each name is only descended into once.
-        name = td.udt.name.decode()
-        if name not in seen:
-            for member_name, member_type in udt_members.get(name, []):
-                recur(member_type, f".{member_name}", seen | {name})
-
-
 # Scalar SCSpecTypes whose Scv helpers are named symmetrically, so that
 # to_scval emits Scv.to<Codec> and from_scval emits Scv.from<Codec>.
 _SCV_CODECS = {
@@ -297,6 +228,8 @@ _SCV_CODECS = {
     xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL: "Symbol",
     xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS: "Address",
     xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS: "Address",
+    # Scv.toError/fromError carry the SCError straight through.
+    xdr.SCSpecType.SC_SPEC_TYPE_ERROR: "Error",
 }
 
 # Scalar SCSpecTypes that map to a fixed Java type.
@@ -320,6 +253,10 @@ _JAVA_TYPES = {
     xdr.SCSpecType.SC_SPEC_TYPE_SYMBOL: "String",
     xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS: "Address",
     xdr.SCSpecType.SC_SPEC_TYPE_MUXED_ADDRESS: "Address",
+    # An SCError has no friendlier Java shape than the XDR one. Spelled in
+    # full because a contract may declare a type of the same name, whose
+    # generated class would be nested in Client and shadow the import.
+    xdr.SCSpecType.SC_SPEC_TYPE_ERROR: "org.stellar.sdk.xdr.SCError",
 }
 
 
@@ -330,9 +267,6 @@ def _lambda_var(depth: int) -> str:
     shadowing a lambda parameter, so every level needs its own name.
     """
     return f"e{depth}"
-
-
-_UNSUPPORTED_ERROR = "SC_SPEC_TYPE_ERROR is not supported"
 
 
 # Templates are compiled once at import rather than on every render call, and
@@ -351,14 +285,17 @@ def to_java_type(td: xdr.SCSpecTypeDef):
     t = td.type
     if t in _JAVA_TYPES:
         return _JAVA_TYPES[t]
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_ERROR:
-        raise NotImplementedError(_UNSUPPORTED_ERROR)
-    # An Option is a plain nullable reference, and a Result is only ever seen
-    # as its Ok arm, so both collapse to the type they wrap.
+    # An Option is a plain nullable reference, so it collapses to the type it
+    # wraps. A Result carries either arm, so it needs a class of its own; the
+    # one position that does reduce to the Ok arm is a function output, which
+    # unwrap_result_output() handles before reaching here.
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return to_java_type(td.option.value_type)
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
-        return to_java_type(td.result.ok_type)
+        return (
+            f"{RESULT_CLASS_NAME}<{to_java_type(td.result.ok_type)}, "
+            f"{to_java_type(td.result.error_type)}>"
+        )
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
         return f"List<{to_java_type(td.vec.element_type)}>"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
@@ -385,16 +322,14 @@ def to_scval(td: xdr.SCSpecTypeDef, name: str, depth: int = 0):
         return f"{name}"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VOID:
         return "Scv.toVoid()"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_ERROR:
-        raise NotImplementedError(_UNSUPPORTED_ERROR)
     if t in _SCV_CODECS:
         return f"Scv.to{_SCV_CODECS[t]}({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         return f"{name} == null ? Scv.toVoid() : {to_scval(td.option.value_type, name, depth)}"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
-        # to_java_type() and from_scval() both reduce Result<T, E> to its Ok
-        # arm, so the Java value in hand is already a T and encodes as one.
-        return to_scval(td.result.ok_type, name, depth)
+        ok = to_scval(td.result.ok_type, f"{name}.getValue()", depth)
+        err = to_scval(td.result.error_type, f"{name}.getError()", depth)
+        return f"({name}.isOk() ? {ok} : {err})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
         var = _lambda_var(depth)
         element = to_scval(td.vec.element_type, var, depth + 1)
@@ -430,15 +365,26 @@ def from_scval(td: xdr.SCSpecTypeDef, name: str, depth: int = 0):
         # value is expected; the generated decodeVoid wraps it. Returning a
         # bare "null" instead would accept any SCVal as a declared void.
         return f"decodeVoid({name})"
-    if t == xdr.SCSpecType.SC_SPEC_TYPE_ERROR:
-        raise NotImplementedError(_UNSUPPORTED_ERROR)
     if t in _SCV_CODECS:
         return f"Scv.from{_SCV_CODECS[t]}({name})"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
         inner = from_scval(td.option.value_type, name, depth)
         return f"{name}.getDiscriminant() != SCValType.SCV_VOID ? {inner} : null"
     if t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
-        return from_scval(td.result.ok_type, name, depth)
+        # The arms can decode to the same Java type, and a nested ternary gives
+        # inference nothing to work with either way, so both factory calls name
+        # their type arguments outright.
+        args = (
+            f"<{to_java_type(td.result.ok_type)}, "
+            f"{to_java_type(td.result.error_type)}>"
+        )
+        ok = from_scval(td.result.ok_type, name, depth)
+        err = from_scval(td.result.error_type, name, depth)
+        return (
+            f"({name}.getDiscriminant() == SCValType.SCV_ERROR"
+            f" ? {RESULT_CLASS_NAME}.{args}err({err})"
+            f" : {RESULT_CLASS_NAME}.{args}ok({ok}))"
+        )
     if t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
         var = _lambda_var(depth)
         element = from_scval(td.vec.element_type, var, depth + 1)
@@ -498,6 +444,59 @@ _TUPLE_CLASS_TEMPLATE = _template(
 )
 
 
+def unwrap_result_output(td: xdr.SCSpecTypeDef) -> xdr.SCSpecTypeDef:
+    """Reduce a function output declared ``Result<T, E>`` to its Ok arm.
+
+    Returning ``Err`` traps the invocation and the SDK raises, so the value a
+    generated ``AssembledTransaction<T>`` decodes is always a T. Everywhere
+    else a Result is a value that may carry either arm, and is generated as
+    the ``Result`` class below.
+    """
+    if td.type == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
+        return td.result.ok_type
+    return td
+
+
+def _spec_types(specs: List[xdr.SCSpecEntry]):
+    """Yield every type a spec declares, as the generator will render it."""
+    for spec in specs:
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0:
+            for param in spec.function_v0.inputs:
+                yield param.type
+            for output in spec.function_v0.outputs:
+                yield unwrap_result_output(output)
+        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0:
+            for field in spec.udt_struct_v0.fields:
+                yield field.type
+        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
+            for case in spec.udt_union_v0.cases:
+                if case.tuple_case is not None:
+                    for value_type in case.tuple_case.type:
+                        yield value_type
+        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_EVENT_V0:
+            for param in spec.event_v0.params:
+                yield param.type
+
+
+def _walk(td: xdr.SCSpecTypeDef, visit) -> None:
+    """Call ``visit`` on this type and every type nested inside it."""
+    visit(td)
+    t = td.type
+    if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
+        _walk(td.option.value_type, visit)
+    elif t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
+        _walk(td.result.ok_type, visit)
+        _walk(td.result.error_type, visit)
+    elif t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
+        _walk(td.vec.element_type, visit)
+    elif t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
+        _walk(td.map.key_type, visit)
+        _walk(td.map.value_type, visit)
+    elif t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
+        for value_type in td.tuple.value_types:
+            _walk(value_type, visit)
+
+
 def _tuple_arities(specs: List[xdr.SCSpecEntry]) -> List[int]:
     """Collect every tuple size the spec actually uses.
 
@@ -506,61 +505,86 @@ def _tuple_arities(specs: List[xdr.SCSpecEntry]) -> List[int]:
     """
     arities = set()
 
-    def walk(td: xdr.SCSpecTypeDef) -> None:
-        t = td.type
-        if t == xdr.SCSpecType.SC_SPEC_TYPE_OPTION:
-            walk(td.option.value_type)
-        elif t == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
-            walk(td.result.ok_type)
-        elif t == xdr.SCSpecType.SC_SPEC_TYPE_VEC:
-            walk(td.vec.element_type)
-        elif t == xdr.SCSpecType.SC_SPEC_TYPE_MAP:
-            walk(td.map.key_type)
-            walk(td.map.value_type)
-        elif t == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE:
-            # An empty tuple maps to Void, so it needs no class.
-            if td.tuple.value_types:
-                arities.add(len(td.tuple.value_types))
-            for value_type in td.tuple.value_types:
-                walk(value_type)
+    def visit(td: xdr.SCSpecTypeDef) -> None:
+        # An empty tuple maps to Void, so it needs no class.
+        if td.type == xdr.SCSpecType.SC_SPEC_TYPE_TUPLE and td.tuple.value_types:
+            arities.add(len(td.tuple.value_types))
 
+    for td in _spec_types(specs):
+        _walk(td, visit)
     for spec in specs:
-        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0:
-            for param in spec.function_v0.inputs:
-                walk(param.type)
-            for output in spec.function_v0.outputs:
-                walk(output)
-        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_STRUCT_V0:
-            for field in spec.udt_struct_v0.fields:
-                walk(field.type)
-        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
-            for case in spec.udt_union_v0.cases:
-                if case.tuple_case is None:
-                    continue
-                # A single-value case is emitted as that value's type; only a
-                # multi-value case needs a tuple.
-                if len(case.tuple_case.type) > 1:
-                    arities.add(len(case.tuple_case.type))
-                for value_type in case.tuple_case.type:
-                    walk(value_type)
-        elif spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_EVENT_V0:
-            for param in spec.event_v0.params:
-                walk(param.type)
+        if spec.kind != xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_UNION_V0:
+            continue
+        for case in spec.udt_union_v0.cases:
+            # A union case is not a tuple type, so the walk above does not see
+            # it. A single-value case is emitted as that value's type; only a
+            # multi-value case needs a tuple.
+            if case.tuple_case is not None and len(case.tuple_case.type) > 1:
+                arities.add(len(case.tuple_case.type))
     return sorted(arities)
 
 
-def render_tuple_classes(specs: List[xdr.SCSpecEntry]) -> str:
-    """Emit the tuple classes this spec needs, checking none is displaced.
+def _error_enum_names(specs: List[xdr.SCSpecEntry]) -> frozenset:
+    """The Java names of the error enums a contract declares."""
+    return frozenset(
+        convert_name(spec.udt_error_enum_v0.name).decode()
+        for spec in specs
+        if spec.kind == xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ERROR_ENUM_V0
+    )
 
-    They are nested in Client alongside every UDT, so a contract type of the
-    same name would be emitted twice under one name; that is reported rather
-    than producing a file which does not compile.
+
+def check_result_error_arms(specs: List[xdr.SCSpecEntry]) -> None:
+    """Refuse a Result whose Err arm cannot be told apart from its Ok arm.
+
+    SEP-48 has the error arm carry an Error or an error-enum UDT, and both
+    reach the wire as SCV_ERROR; that is what the generated decoder tests to
+    pick an arm. An arm of any other type encodes as an ordinary value and
+    decodes straight back as the Ok arm, so a round trip would silently turn an
+    Err into an Ok. A function output declared Result is not checked: it is
+    reduced to its Ok arm and no Result is generated for it.
     """
-    arities = _tuple_arities(specs)
-    if not arities:
-        return ""
-    wanted = {get_tuple_class_name(arity) for arity in arities}
-    declared = {
+    error_enums = _error_enum_names(specs)
+
+    def visit(td: xdr.SCSpecTypeDef) -> None:
+        if td.type != xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
+            return
+        arm = td.result.error_type
+        if arm.type == xdr.SCSpecType.SC_SPEC_TYPE_ERROR:
+            return
+        if arm.type == xdr.SCSpecType.SC_SPEC_TYPE_UDT:
+            name = convert_name(arm.udt.name).decode()
+            if name in error_enums:
+                return
+            declared = f"the type {name}"
+        else:
+            declared = arm.type.name
+        raise NotImplementedError(
+            f"the error arm of a Result is declared {declared}, which does not "
+            f"reach the wire as SCV_ERROR; SEP-48 has it carry an Error or an "
+            f"error enum, and the generated decoder has nothing else to tell "
+            f"the two arms apart by"
+        )
+
+    for td in _spec_types(specs):
+        _walk(td, visit)
+
+
+def _uses_result_type(specs: List[xdr.SCSpecEntry]) -> bool:
+    """Whether any declaration needs the generated ``Result`` class."""
+    found = []
+
+    def visit(td: xdr.SCSpecTypeDef) -> None:
+        if td.type == xdr.SCSpecType.SC_SPEC_TYPE_RESULT:
+            found.append(True)
+
+    for td in _spec_types(specs):
+        _walk(td, visit)
+    return bool(found)
+
+
+def declared_udt_names(specs: List[xdr.SCSpecEntry]) -> set:
+    """The Java names of every UDT the contract declares."""
+    return {
         convert_name(getattr(spec, attr).name).decode()
         for spec in specs
         for kind, attr in (
@@ -571,13 +595,77 @@ def render_tuple_classes(specs: List[xdr.SCSpecEntry]) -> str:
         )
         if spec.kind == kind
     }
-    clash = sorted(wanted & declared)
+
+
+def _check_not_displaced(specs: List[xdr.SCSpecEntry], wanted: set, what: str) -> None:
+    """Refuse to emit a helper class a contract type has already claimed.
+
+    Helpers are nested in Client alongside every UDT, so a contract type of the
+    same name would be emitted twice under one name; that is reported rather
+    than producing a file which does not compile.
+    """
+    clash = sorted(wanted & declared_udt_names(specs))
     if clash:
         raise NotImplementedError(
             f"contract declares {', '.join(clash)}, which collides with the "
-            f"tuple class the generator needs for the same arity"
+            f"{what} the generator needs"
         )
+
+
+def render_tuple_classes(specs: List[xdr.SCSpecEntry]) -> str:
+    """Emit the tuple classes this spec needs, checking none is displaced."""
+    arities = _tuple_arities(specs)
+    if not arities:
+        return ""
+    _check_not_displaced(
+        specs,
+        {get_tuple_class_name(arity) for arity in arities},
+        "tuple class of the same arity",
+    )
     return "\n".join(_TUPLE_CLASS_TEMPLATE.render(arity=arity) for arity in arities)
+
+
+RESULT_CLASS_NAME = "Result"
+
+
+_RESULT_CLASS_TEMPLATE = _template(
+    """
+    /**
+     * A spec {@code Result<T, E>}, carrying whichever arm the value holds.
+     *
+     * <p>An Err arm arrives as an SCV_ERROR, which is how it is told from an
+     * Ok arm on the way back in. A function that *returns* Result is not
+     * generated through this class: returning Err traps the invocation, so
+     * {@code AssembledTransaction<T>} only ever sees the Ok arm.
+     */
+    @Value
+    // Spelled in full for the same reason the XDR types above are: a contract
+    // may declare a type of either name, and its generated class is nested
+    // here and would shadow the import.
+    @lombok.AllArgsConstructor(access = lombok.AccessLevel.PRIVATE)
+    public static class {{ class_name }}<T, E> {
+        boolean ok;
+        T value;
+        E error;
+
+        public static <T, E> {{ class_name }}<T, E> ok(T value) {
+            return new {{ class_name }}<>(true, value, null);
+        }
+
+        public static <T, E> {{ class_name }}<T, E> err(E error) {
+            return new {{ class_name }}<>(false, null, error);
+        }
+    }
+"""
+)
+
+
+def render_result_class(specs: List[xdr.SCSpecEntry]) -> str:
+    """Emit the Result class, if any declaration carries one as a value."""
+    if not _uses_result_type(specs):
+        return ""
+    _check_not_displaced(specs, {RESULT_CLASS_NAME}, "Result class")
+    return _RESULT_CLASS_TEMPLATE.render(class_name=RESULT_CLASS_NAME)
 
 
 _IMPORTS_TEMPLATE = _template(
@@ -669,11 +757,21 @@ public enum {{ entry.name.decode() }} {
     }
 
     public SCVal toSCVal() {
-        return Scv.toUint32(value);
+        return Scv.toError(org.stellar.sdk.xdr.SCError.builder()
+                .discriminant(org.stellar.sdk.xdr.SCErrorType.SCE_CONTRACT)
+                .contractCode(new org.stellar.sdk.xdr.Uint32(
+                        new org.stellar.sdk.xdr.XdrUnsignedInteger(value)))
+                .build());
     }
 
     public static {{ entry.name.decode() }} fromSCVal(SCVal scVal) {
-        return fromValue(Scv.fromUint32(scVal));
+        org.stellar.sdk.xdr.SCError error = Scv.fromError(scVal);
+        if (error.getDiscriminant() != org.stellar.sdk.xdr.SCErrorType.SCE_CONTRACT
+                || error.getContractCode() == null) {
+            throw new IllegalArgumentException(
+                "expected an SCE_CONTRACT error, got " + error.getDiscriminant());
+        }
+        return fromValue(error.getContractCode().getUint32().getNumber());
     }
 }"""
 )
@@ -899,7 +997,7 @@ def render_functions(entries: List[xdr.SCSpecFunctionV0]):
         if len(output) == 0:
             return "Void"
         elif len(output) == 1:
-            return to_java_type(output[0])
+            return to_java_type(unwrap_result_output(output[0]))
         else:
             # Unreachable: SCSpecFunctionV0 declares outputs<1>. The sibling
             # parse_result_xdr_fn already raises here; this used to interpolate
@@ -912,7 +1010,7 @@ def render_functions(entries: List[xdr.SCSpecFunctionV0]):
         if len(output) == 0:
             return "v -> null"
         elif len(output) == 1:
-            return f'v -> {from_scval(output[0], "v")}'
+            return f'v -> {from_scval(unwrap_result_output(output[0]), "v")}'
         else:
             raise NotImplementedError(
                 "Tuple return type is not supported, please report this issue"
@@ -1125,9 +1223,16 @@ _EVENT_TEMPLATE = _template(
             {%- if has_vec_data %}
             // Scv.fromVec returns a Collection; indexing needs a List.
             List<SCVal> values = new ArrayList<>(Scv.fromVec(event.getData()));
-            if (values.size() < {{ data_param_count }}) {
+            // Exact, unlike the trailing topics matches() tolerates. Positional
+            // data carries no names, so an extra value is indistinguishable
+            // from a different declaration's data; accepting it would let this
+            // declaration decode an event belonging to a longer one and drop
+            // the rest of it. Reporting the drift is what parseEvent needs to
+            // move on to the next candidate.
+            if (values.size() != {{ data_param_count }}) {
                 throw new IllegalArgumentException(
-                    "event data vector has fewer values than declared");
+                    "event data vector holds " + values.size() + " values, but "
+                        + "{{ class_name }} declares {{ data_param_count }}");
             }
             {%- endif %}
             {%- if has_map_data %}
@@ -1208,7 +1313,6 @@ def _event_params(
     entry: xdr.SCSpecEventV0,
     param_names: List[str],
     prefix_topic_count: int,
-    udt_members: dict,
 ) -> Tuple[List[dict], List[dict], List[str]]:
     """Work out how each declared parameter is typed, decoded and filtered.
 
@@ -1216,7 +1320,6 @@ def _event_params(
     list (which drives topicFilter), and the map keys a MAP-format event must
     carry to parse.
     """
-    event_name = entry.name.sc_symbol.decode()
     data_format = entry.data_format
     params: List[dict] = []
     topic_params: List[dict] = []
@@ -1225,9 +1328,6 @@ def _event_params(
     data_index = 0
     for param, java_name in zip(entry.params, param_names):
         chain_name = param.name.decode()
-        _reject_unsupported_event_type(
-            param.type, event_name, chain_name, udt_members=udt_members
-        )
         if (
             param.location
             == xdr.SCSpecEventParamLocationV0.SC_SPEC_EVENT_PARAM_LOCATION_TOPIC_LIST
@@ -1300,9 +1400,15 @@ def _allocate_topic_filter_names(
     """
     used = set(param_names) | _TOPIC_FILTER_LOCALS
     for topic in topic_params:
-        while topic["java_name"] in _TOPIC_FILTER_LOCALS:
-            topic["java_name"] += "_"
-            used.add(topic["java_name"])
+        if topic["java_name"] in _TOPIC_FILTER_LOCALS:
+            # Renaming out of build()'s way has to clear the other parameters
+            # too, not just the locals: a parameter called ``row`` alongside one
+            # called ``row_`` would otherwise be given the name already taken.
+            name = topic["java_name"] + "_"
+            while name in used or name in _TOPIC_FILTER_LOCALS:
+                name += "_"
+            topic["java_name"] = name
+            used.add(name)
         flag = topic["java_name"] + "Set"
         while flag in used:
             flag += "_"
@@ -1325,9 +1431,7 @@ def render_event_helpers(names: dict):
     return _EVENT_HELPERS_TEMPLATE.render(**names)
 
 
-def render_event(
-    entry: xdr.SCSpecEventV0, class_name: str, names: dict, udt_members: dict
-):
+def render_event(entry: xdr.SCSpecEventV0, class_name: str, names: dict):
     prefix_symbols = [s.sc_symbol.decode() for s in entry.prefix_topics]
     data_format = entry.data_format
     data_params = [
@@ -1347,7 +1451,7 @@ def render_event(
 
     param_names = resolve_event_param_names(entry)
     params, topic_params, required_data_keys = _event_params(
-        entry, param_names, len(prefix_symbols), udt_members
+        entry, param_names, len(prefix_symbols)
     )
     return _EVENT_TEMPLATE.render(
         class_name=class_name,
@@ -1448,6 +1552,7 @@ def append_underscore(specs: List[xdr.SCSpecEntry]):
 
 def generate_binding(specs: List[xdr.SCSpecEntry], package: str) -> str:
     append_underscore(specs)
+    check_result_error_arms(specs)
 
     generated = []
     generated.append(
@@ -1457,6 +1562,7 @@ def generate_binding(specs: List[xdr.SCSpecEntry], package: str) -> str:
     generated.append(render_imports(package))
     generated.append("public class Client extends ContractClient {")
     generated.append(render_tuple_classes(specs))
+    generated.append(render_result_class(specs))
 
     function_specs: List[xdr.SCSpecFunctionV0] = [
         spec.function_v0
@@ -1476,11 +1582,10 @@ def generate_binding(specs: List[xdr.SCSpecEntry], package: str) -> str:
             specs, event_specs
         )
         names = dict(zip(("union", "decoded", "unparsed"), helper_names))
-        udt_members = _udt_member_types(specs)
         generated.append(render_event_helpers(names))
         for event_spec, event_cls_name in zip(event_specs, event_class_names):
             generated.append(
-                render_event(event_spec, event_cls_name, names, udt_members)
+                render_event(event_spec, event_cls_name, names)
             )
         generated.append(render_event_dispatcher(event_specs, event_class_names, names))
 

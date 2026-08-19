@@ -36,6 +36,21 @@ def _union(name: bytes, cases: list) -> xdr.SCSpecEntry:
     )
 
 
+def _error_enum(name: bytes, cases: list[tuple[bytes, int]]) -> xdr.SCSpecEntry:
+    return xdr.SCSpecEntry(
+        xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ERROR_ENUM_V0,
+        udt_error_enum_v0=xdr.SCSpecUDTErrorEnumV0(
+            doc=b"",
+            lib=b"",
+            name=name,
+            cases=[
+                xdr.SCSpecUDTErrorEnumCaseV0(doc=b"", name=n, value=xdr.Uint32(v))
+                for n, v in cases
+            ],
+        ),
+    )
+
+
 def _function(name: bytes, inputs: list, outputs: list) -> xdr.SCSpecEntry:
     return xdr.SCSpecEntry(
         xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0,
@@ -109,13 +124,12 @@ def _result(ok: xdr.SCSpecTypeDef, error: xdr.SCSpecTypeDef) -> xdr.SCSpecTypeDe
     )
 
 
-class TestResultValuesEncode:
-    """A Result-typed value encodes as its Ok arm rather than emitting garbage.
+class TestResultValuesCarryBothArms:
+    """A Result-typed value is generated as a class holding either arm.
 
-    to_java_type() and from_scval() already reduce Result<T, E> to T, so the
-    Java value in hand is a T. to_scval() used to `return` a NotImplementedError
-    instead of raising it, which interpolated the exception's message into the
-    generated source as a bare expression.
+    It used to reduce to its Ok arm everywhere, which is right for a function
+    output - returning Err traps the invocation - but silently mis-decodes an
+    Err anywhere a Result is an ordinary value.
     """
 
     def setup_method(self):
@@ -126,15 +140,53 @@ class TestResultValuesEncode:
             package="org.example",
         )
 
-    def test_encodes_the_ok_arm(self):
-        assert 'fields.put("r", Scv.toUint32(this.r));' in self.generated
+    def test_the_result_class_is_emitted(self):
+        assert "public static class Result<T, E> {" in self.generated
 
-    def test_decodes_the_ok_arm(self):
-        assert 'Scv.fromUint32(map.get(Scv.toSymbol("r")))' in self.generated
+    def test_only_the_factories_can_build_one(self):
+        """An all-args constructor would let ok=true carry an error."""
+        assert (
+            "@lombok.AllArgsConstructor(access = lombok.AccessLevel.PRIVATE)"
+            in self.generated
+        )
+
+    def test_the_lombok_names_it_reaches_for_are_qualified(self):
+        """A contract may declare a type called AllArgsConstructor."""
+        assert "\n    @AllArgsConstructor(access" not in self.generated
+
+    def test_the_field_is_typed_with_both_arms(self):
+        assert "Result<Long, org.stellar.sdk.xdr.SCError> r;" in self.generated
+
+    def test_encodes_whichever_arm_it_holds(self):
+        assert "this.r.isOk() ? Scv.toUint32(this.r.getValue())" in self.generated
+        assert "Scv.toError(this.r.getError())" in self.generated
+
+    def test_decodes_the_err_arm_as_an_error(self):
+        assert "getDiscriminant() == SCValType.SCV_ERROR" in self.generated
+        assert "Result.<Long, org.stellar.sdk.xdr.SCError>err(" in self.generated
+        assert "Result.<Long, org.stellar.sdk.xdr.SCError>ok(" in self.generated
 
     def test_no_exception_text_leaks_into_the_source(self):
         assert "not supported" not in self.generated
         assert "NotImplementedError" not in self.generated
+
+
+class TestResultFunctionOutputsStayUnwrapped:
+    """Returning Err traps, so AssembledTransaction<T> never sees a Result."""
+
+    def setup_method(self):
+        u32 = _type(xdr.SCSpecType.SC_SPEC_TYPE_U32)
+        error = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
+        self.generated = generate_binding(
+            [_function(b"get", [], [_result(u32, error)])], package="org.example"
+        )
+
+    def test_the_signature_is_unchanged(self):
+        assert "AssembledTransaction<Long> get(" in self.generated
+        assert "AssembledTransaction<Result<" not in self.generated
+
+    def test_no_result_class_is_emitted_for_it_alone(self):
+        assert "public static class Result<T, E> {" not in self.generated
 
 
 class TestVoidValuesDecode:
@@ -360,35 +412,176 @@ class TestEventNamesAvoidCollisions:
         assert "class PingEvent implements Event_" in generated
 
 
-class TestEventTypesThatCannotBeDecoded:
-    """Reject at generation time rather than emitting a wrong decoder."""
+class TestEventsCarryResultsAndErrors:
+    """An event may legitimately carry an Err arm, and now decodes one."""
 
-    def test_a_result_parameter_is_rejected(self):
-        """to_java_type reduces Result<T, E> to T, but an event may carry Err."""
+    def test_a_result_parameter_keeps_both_arms(self):
         error = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
-        spec = _event(
-            b"oops", [b"oops"], [(b"outcome", _result(_u32(), error), _DATA)], _SINGLE
+        generated = generate_binding(
+            [
+                _event(
+                    b"oops",
+                    [b"oops"],
+                    [(b"outcome", _result(_u32(), error), _DATA)],
+                    _SINGLE,
+                )
+            ],
+            package="org.example",
         )
-        try:
-            generate_binding([spec], package="org.example")
-        except NotImplementedError as exc:
-            assert "oops.outcome" in str(exc)
-        else:
-            raise AssertionError("expected a Result parameter to be rejected")
+        assert "Result<Long, org.stellar.sdk.xdr.SCError> outcome;" in generated
+        assert "Result.<Long, org.stellar.sdk.xdr.SCError>err(" in generated
 
-    def test_a_result_nested_in_a_container_is_rejected(self):
+    def test_a_result_nested_in_a_container_keeps_both_arms(self):
         error = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
         nested = xdr.SCSpecTypeDef(
             xdr.SCSpecType.SC_SPEC_TYPE_VEC,
             vec=xdr.SCSpecTypeVec(_result(_u32(), error)),
         )
-        spec = _event(b"oops", [b"oops"], [(b"outcomes", nested, _DATA)], _SINGLE)
+        generated = generate_binding(
+            [_event(b"oops", [b"oops"], [(b"outcomes", nested, _DATA)], _SINGLE)],
+            package="org.example",
+        )
+        assert "List<Result<Long, org.stellar.sdk.xdr.SCError>> outcomes;" in generated
+
+    def test_an_error_parameter_maps_to_the_xdr_type(self):
+        error = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
+        generated = generate_binding(
+            [_event(b"failed", [b"failed"], [(b"why", error, _DATA)], _SINGLE)],
+            package="org.example",
+        )
+        assert "org.stellar.sdk.xdr.SCError why;" in generated
+        assert "Scv.fromError(event.getData())" in generated
+
+    def test_an_error_enum_parameter_decodes_from_scv_error(self):
+        code = xdr.SCSpecTypeDef(
+            xdr.SCSpecType.SC_SPEC_TYPE_UDT, udt=xdr.SCSpecTypeUDT(name=b"ErrorCode")
+        )
+        generated = generate_binding(
+            [
+                _error_enum(b"ErrorCode", [(b"Bad", 1)]),
+                _event(b"failed", [b"failed"], [(b"code", code, _DATA)], _SINGLE),
+            ],
+            package="org.example",
+        )
+        assert "ErrorCode code;" in generated
+        assert "ErrorCode.fromSCVal(event.getData())" in generated
+
+    def test_a_result_class_is_only_emitted_when_used(self):
+        generated = generate_binding(
+            [_event(b"ping", [b"ping"], [], _SINGLE)], package="org.example"
+        )
+        assert "class Result<T, E>" not in generated
+
+    def test_a_contract_type_named_result_is_reported(self):
+        error = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
+        specs = [
+            _struct(b"Result", [(b"v", _u32())]),
+            _event(
+                b"oops",
+                [b"oops"],
+                [(b"outcome", _result(_u32(), error), _DATA)],
+                _SINGLE,
+            ),
+        ]
         try:
-            generate_binding([spec], package="org.example")
+            generate_binding(specs, package="org.example")
         except NotImplementedError as exc:
-            assert "oops.outcomes[]" in str(exc)
+            assert "Result" in str(exc)
         else:
-            raise AssertionError("expected a nested Result to be rejected")
+            raise AssertionError("expected a displaced Result class to be reported")
+
+
+class TestResultErrorArmsMustBeDistinguishable:
+    """The decoder tells the arms apart by SCV_ERROR and nothing else."""
+
+    def _spec(self, err_type, extra=()):
+        return list(extra) + [
+            _struct(b"Holder", [(b"r", _result(_u32(), err_type))]),
+        ]
+
+    def test_a_plain_type_on_the_error_arm_is_rejected(self):
+        try:
+            generate_binding(self._spec(_u32()), package="org.example")
+        except NotImplementedError as exc:
+            assert "SC_SPEC_TYPE_U32" in str(exc)
+            assert "SCV_ERROR" in str(exc)
+        else:
+            raise AssertionError("expected a u32 error arm to be rejected")
+
+    def test_an_ordinary_udt_on_the_error_arm_is_rejected(self):
+        specs = self._spec(
+            xdr.SCSpecTypeDef(
+                xdr.SCSpecType.SC_SPEC_TYPE_UDT, udt=xdr.SCSpecTypeUDT(name=b"Thing")
+            ),
+            extra=[_struct(b"Thing", [(b"v", _u32())])],
+        )
+        try:
+            generate_binding(specs, package="org.example")
+        except NotImplementedError as exc:
+            assert "Thing" in str(exc)
+        else:
+            raise AssertionError("expected a struct error arm to be rejected")
+
+    def test_an_error_enum_on_the_error_arm_is_accepted(self):
+        code = xdr.SCSpecTypeDef(
+            xdr.SCSpecType.SC_SPEC_TYPE_UDT, udt=xdr.SCSpecTypeUDT(name=b"Code")
+        )
+        generate_binding(
+            self._spec(code, extra=[_error_enum(b"Code", [(b"Bad", 1)])]),
+            package="org.example",
+        )
+
+    def test_a_bare_error_on_the_error_arm_is_accepted(self):
+        generate_binding(
+            self._spec(_type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)), package="org.example"
+        )
+
+    def test_a_function_output_is_not_checked(self):
+        """It reduces to its Ok arm, so no Result decoder is generated for it."""
+        generated = generate_binding(
+            [_function(b"get", [], [_result(_u32(), _u32())])], package="org.example"
+        )
+        assert "AssembledTransaction<Long> get(" in generated
+
+
+class TestErrorEnumWireEncoding:
+    """A contract error is an SCV_ERROR on the wire, not a bare u32."""
+
+    def setup_method(self):
+        self.generated = generate_binding(
+            [_error_enum(b"ErrorCode", [(b"Bad", 1)])], package="org.example"
+        )
+
+    def test_it_encodes_as_an_sce_contract_error(self):
+        assert "Scv.toError(org.stellar.sdk.xdr.SCError.builder()" in self.generated
+        assert "org.stellar.sdk.xdr.SCErrorType.SCE_CONTRACT" in self.generated
+        assert "Scv.toUint32(value)" not in self.generated
+
+    def test_it_decodes_from_an_sce_contract_error(self):
+        assert "Scv.fromError(scVal)" in self.generated
+        assert "getContractCode().getUint32().getNumber()" in self.generated
+
+    def test_a_plain_contract_enum_is_still_a_u32(self):
+        generated = generate_binding(
+            [
+                xdr.SCSpecEntry(
+                    xdr.SCSpecEntryKind.SC_SPEC_ENTRY_UDT_ENUM_V0,
+                    udt_enum_v0=xdr.SCSpecUDTEnumV0(
+                        doc=b"",
+                        lib=b"",
+                        name=b"Colour",
+                        cases=[
+                            xdr.SCSpecUDTEnumCaseV0(
+                                doc=b"", name=b"Red", value=xdr.Uint32(1)
+                            )
+                        ],
+                    ),
+                )
+            ],
+            package="org.example",
+        )
+        assert "return Scv.toUint32(value);" in generated
+        assert "SCE_CONTRACT" not in generated
 
 
 class TestEventDispatchOrder:
@@ -498,6 +691,65 @@ class TestEventNameAllocationIsComplete:
         )
         assert "encodeTopic(Scv.toUint32(row))" not in generated
 
+    def test_shadow_rename_does_not_land_on_another_parameter(self):
+        """Renaming `row` out of build()'s way must clear `row_` as well."""
+        generated = generate_binding(
+            [
+                _event(
+                    b"e",
+                    [b"e"],
+                    [(b"row", _u32(), _TOPIC), (b"row_", _u32(), _TOPIC)],
+                    _SINGLE,
+                )
+            ],
+            package="org.example",
+        )
+        builder = generated[generated.index("class TopicFilterBuilder") :]
+        declared = re.findall(r"private (?:Long|boolean) (\w+);", builder)
+        assert len(declared) == len(set(declared)), declared
+        setters = re.findall(r"public TopicFilterBuilder (\w+)\(", builder)
+        assert len(setters) == len(set(setters)), setters
+
+    def test_an_unnamed_parameter_still_generates(self):
+        """A spec name is only length-limited, so it may be empty.
+
+        The name it falls back to cannot be a bare underscore: that is a Java
+        keyword, not an identifier, from Java 9 on.
+        """
+        generated = generate_binding(
+            [_event(b"e", [b"e"], [(b"", _u32(), _DATA)], _SINGLE)],
+            package="org.example",
+        )
+        assert "Long __;" in generated
+        assert "Long _;" not in generated
+
+    def test_a_parameter_named_underscore_is_renamed(self):
+        """`_` is spelled by a spec as readily as it is reserved by Java."""
+        generated = generate_binding(
+            [_event(b"e", [b"e"], [(b"_", _u32(), _DATA)], _SINGLE)],
+            package="org.example",
+        )
+        assert "Long _;" not in generated
+
+
+class TestVecDataCardinalityIsExact:
+    """Positional data carries no names, so a surplus value is not decodable."""
+
+    def test_the_declared_count_is_required_exactly(self):
+        generated = generate_binding(
+            [
+                _event(
+                    b"pair",
+                    [b"pair"],
+                    [(b"a", _u32(), _DATA), (b"b", _u32(), _DATA)],
+                    xdr.SCSpecEventDataFormat.SC_SPEC_EVENT_DATA_FORMAT_VEC,
+                )
+            ],
+            package="org.example",
+        )
+        assert "values.size() != 2" in generated
+        assert "values.size() < 2" not in generated
+
 
 class TestEventDispatchPrefersStaticTopics:
     """Topic count alone does not measure how selective a declaration is."""
@@ -543,24 +795,8 @@ class TestUdtReferencesMatchDeclarations:
         assert "snake_type thing;" not in generated
 
 
-class TestResultRejectionSeesThroughUdts:
-    """A UDT hides its members behind a name; the decoder has the same gap."""
-
-    def test_a_result_inside_a_referenced_struct_is_rejected(self):
-        error = _type(xdr.SCSpecType.SC_SPEC_TYPE_ERROR)
-        box = xdr.SCSpecTypeDef(
-            xdr.SCSpecType.SC_SPEC_TYPE_UDT, udt=xdr.SCSpecTypeUDT(name=b"Box")
-        )
-        specs = [
-            _struct(b"Box", [(b"inner", _result(_u32(), error))]),
-            _event(b"boxed", [b"boxed"], [(b"payload", box, _DATA)], _SINGLE),
-        ]
-        try:
-            generate_binding(specs, package="org.example")
-        except NotImplementedError as exc:
-            assert "boxed.payload.inner" in str(exc)
-        else:
-            raise AssertionError("expected a Result behind a UDT to be rejected")
+class TestRecursiveUdtsTerminate:
+    """A UDT can refer to itself; generation must not loop."""
 
     def test_a_recursive_udt_does_not_loop(self):
         node = xdr.SCSpecTypeDef(
