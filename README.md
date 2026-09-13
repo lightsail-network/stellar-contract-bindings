@@ -36,7 +36,7 @@ stellar-contract-bindings python --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRG
 
 #### Java
 ```shell
-stellar-contract-bindings java --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF --rpc-url https://mainnet.sorobanrpc.com --output ./bindings --package com.example
+stellar-contract-bindings java --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF --rpc-url https://mainnet.sorobanrpc.com --output ./bindings --package com.example --class-name Client
 ```
 
 #### Flutter/Dart
@@ -87,15 +87,82 @@ If the contract declares events in its SEP-48 spec (supported since Protocol
 accepts `xdr.ContractEvent`, RPC `EventInfo`, or raw `(topics, data)` values.
 
 #### Java
+
+The generated file holds one class, `Client` by default, with a method per
+contract function and a nested class per contract type. It compiles against
+[java-stellar-sdk](https://github.com/lightsail-network/java-stellar-sdk) 4.0.0
+or newer and needs [Lombok](https://projectlombok.org/) on the compile classpath.
+
 ```java
-public class Example extends ContractClient {
-    public static void main(String[] args) {
-        KeyPair kp = KeyPair.fromAccountId("GD5KKP3LHUDXLDCGKP55NLEOEHMS3Z4BS6IDDZFCYU3BDXUZTBWL7JNF");
-        Client client = new Client("CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF", "https://mainnet.sorobanrpc.com", Network.PUBLIC);
-        AssembledTransaction<List<byte[]>> tx = client.hello("World".getBytes(), kp.getAccountId(), kp, 100);
+import com.example.Client;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+
+public class Example {
+    public static void main(String[] args) throws Exception {
+        KeyPair signer = KeyPair.fromSecretSeed("S...");
+        try (Client client = new Client(
+                "CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF",
+                "https://mainnet.sorobanrpc.com",
+                Network.PUBLIC,
+                Client.MethodOptions.signedBy(signer))) {
+            // Read a simulated result.
+            byte[] name = "World".getBytes(StandardCharsets.UTF_8);
+            List<byte[]> greeting = client.hello(name).result();
+
+            // Sign and submit a transaction; the signer comes from the options.
+            client.hello(name).signAndSubmit(null, true);
+
+            // Options given to a call replace the client's defaults.
+            client.hello(name, Client.MethodOptions.builder().baseFee(200).build());
+        }
     }
 }
 ```
+
+A call that fails because the contract returned an error raises the SDK's
+`SimulationFailedException`. If the contract declares an error enum, say
+`Error`, the generated enum reads the case back out of that failure:
+
+```java
+try {
+    client.withdraw(amount).result();
+} catch (SimulationFailedException e) {
+    Client.Error.fromSimulationError(e).ifPresent(error -> log.warn("rejected: {}", error));
+}
+```
+
+Every function has two overloads: one that takes only the contract arguments
+and uses the client's default options (a read-only simulation unless the
+client was created with other defaults), and one that also takes a
+`MethodOptions` (source account, signer, fee, timeouts, and whether to
+simulate and restore). The types map as follows:
+
+| Spec type | Java type |
+| --- | --- |
+| `bool`, `u32`, `i32`, `i64` | `boolean`, `long`, `int`, `long`; boxed inside `List`, `Map`, `Option` and tuples |
+| `u64`, `u128`, `i128`, `u256`, `i256`, `timepoint`, `duration` | `BigInteger` |
+| `Symbol` | `String` |
+| `String`, `Bytes`, `BytesN<N>` | `byte[]`: a Soroban string is bytes with no encoding of its own, so the bindings pass it through untouched; the length is checked for `BytesN` |
+| `Address`, `MuxedAddress` | `org.stellar.sdk.Address` |
+| `Vec<T>`, `Map<K, V>` | `List<T>`, `Map<K, V>` |
+| `Option<T>` | `T`, with `null` for `None` |
+| `(A, B, ...)` | a generated `Tuple2<A, B>` and so on, built with `Tuple2.of(a, b)` |
+| `Result<T, E>` | a generated `Result<T, E>` holding either arm |
+| struct | a class with a builder, a constructor and getters |
+| enum | a Java enum with `getValue()` |
+| error enum | a Java enum with `getValue()` and `fromSimulationError(...)` |
+| union | an abstract class with one nested class per case; handle them with `match(...)`, or `getKind()` / `instanceof` |
+
+Names that are Java keywords or collide with another name are renamed, and
+every rename is printed when the bindings are generated.
+
+If the contract declares events in its SEP-48 spec, the bindings also include
+a class per event with `matches`, `parse`, `getEventName()` and a
+`topicFilter()` builder for `getEvents`, plus a `parseEvent` dispatcher
+accepting an XDR `ContractEvent` or an RPC `EventInfo`.
 
 #### Flutter/Dart
 ```dart

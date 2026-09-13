@@ -13,7 +13,8 @@ app = Flask(__name__)
 
 required_fields = {
     "java": {
-        "package": {"label": "Java Package", "default": "org.example", "type": "text"}
+        "package": {"label": "Java Package", "default": "org.example", "type": "text"},
+        "class_name": {"label": "Class Name", "default": "Client", "type": "text"},
     },
     "python": {},
     "flutter": {
@@ -56,7 +57,8 @@ def generate_code(
         return black.format_str(code, mode=black.Mode())
     elif language == "java":
         package = extra_fields.get("package", "org.example")
-        code = generate_java_binding(specs, package)
+        class_name = extra_fields.get("class_name", "Client")
+        code = generate_java_binding(specs, package, class_name)
         return code
     elif language == "flutter":
         class_name = extra_fields.get("class_name", "Contract")

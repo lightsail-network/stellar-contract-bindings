@@ -3,6 +3,7 @@ import org.stellar.sdk.scval.Scv;
 import org.stellar.sdk.xdr.SCVal;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.Map;
 
 /** Exercises the generated tuple classes, which replaced javatuples. */
 public class TupleSmoke {
@@ -33,7 +34,7 @@ public class TupleSmoke {
 
         // A tuple's wire form is a plain vec, so a hand-built one decodes too.
         // The struct around it is a map, keyed by field name.
-        LinkedHashMap<SCVal, SCVal> fields = new LinkedHashMap<>();
+        Map<SCVal, SCVal> fields = new LinkedHashMap<>();
         fields.put(Scv.toSymbol("pair"),
             Scv.toVec(Arrays.asList(Scv.toUint32(7L), Scv.toUint32(8L))));
         Client.Holder manual = Client.Holder.fromSCVal(Scv.toMap(fields));
