@@ -52,10 +52,12 @@ jobs:
         run: uv run stellar-contract-bindings python --contract-id CDOAW6D7NXAPOCO7TFAWZNJHK62E3IYRGNRVX3VOXNKNVOXCLLPJXQCF --rpc-url https://mainnet.sorobanrpc.com --output ./bindings
 
   java-compile:
-    # The Java generator emits source that no test could previously execute, so
-    # text assertions were the only check. This job compiles the generated
-    # bindings for real; --release 8 matches the bytecode level stellar-sdk
-    # publishes.
+    # Text assertions cannot tell whether generated Java compiles. This job
+    # compiles the generated bindings for real, runs the harnesses in
+    # tests/java against them, and calls the reference contract on testnet
+    # through them (deployed by the tests themselves; see
+    # tests/reference_contract.py); --release 8 matches the bytecode level
+    # stellar-sdk publishes.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -78,7 +80,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/stellar-contract-bindings/jars
-          key: java-jars-lombok1.18.34-stellarsdk4.0.1-gson2.14.0-bcprov1.84-codec1.22.0
+          key: java-jars-lombok1.18.34-stellarsdk4.0.1-gson2.14.0-bcprov1.84-codec1.22.0-okhttp4.12.0-okio3.6.0-kotlin1.9.10
 
       - name: Compile the generated Java bindings
         env:

@@ -1,24 +1,27 @@
-import asyncio
+"""Calls the reference contract on testnet through the generated Python bindings.
+
+The contract is deployed by the ``reference_contract_id`` fixture in
+conftest.py; see tests/reference_contract.py.
+"""
 
 import pytest
-from stellar_sdk import Network
 from stellar_sdk.contract.exceptions import SimulationFailedError
 
 from .client import *
+from .reference_contract import NETWORK_PASSPHRASE, RPC_URL
 
-CONTRACT_ID = "CDFXUXWDXV47PNXV2A7VUWWYLJ3SNZOIKNGMIEJR6TZ4AQ3EOVBVY3S4"
-RPC_URL = "https://soroban-testnet.stellar.org/"
-NETWORK_PASSPHRASE = Network.PUBLIC_NETWORK_PASSPHRASE
+
+@pytest.fixture(scope="module")
+def sync_client(reference_contract_id):
+    client = Client(reference_contract_id, RPC_URL, NETWORK_PASSPHRASE)
+    yield client
+    client.server.close()
 
 
 class TestClient:
-    @classmethod
-    def setup_class(cls):
-        cls.client = Client(CONTRACT_ID, RPC_URL, NETWORK_PASSPHRASE)
-
-    @classmethod
-    def teardown_class(cls):
-        cls.client.server.close()
+    @pytest.fixture(autouse=True)
+    def _client(self, sync_client):
+        self.client = sync_client
 
     def test_hello(self):
         result = self.client.hello("overcat")
@@ -128,7 +131,9 @@ class TestClient:
         assert result.result() == address
 
     def test_muxed_address(self):
-        address = Address("MBXCJUTSISFIAS2UENBBO4NXVBJDL7MQHHWM2MSM6S7N4BNNUAO2CAAAAAAAAAAAAHJ22")
+        address = Address(
+            "MBXCJUTSISFIAS2UENBBO4NXVBJDL7MQHHWM2MSM6S7N4BNNUAO2CAAAAAAAAAAAAHJ22"
+        )
         result = self.client.muxed_address(address)
         assert result.result() == address
 
@@ -230,11 +235,12 @@ class TestClient:
         result = self.client.duration(123456789)
         assert result.result() == 123456789
 
+
 @pytest.mark.asyncio
 class TestClientAsync:
     @pytest.fixture(autouse=True)
-    def setup_method(self):
-        self.client = ClientAsync(CONTRACT_ID, RPC_URL, NETWORK_PASSPHRASE)
+    def setup_method(self, reference_contract_id):
+        self.client = ClientAsync(reference_contract_id, RPC_URL, NETWORK_PASSPHRASE)
 
     async def test_hello(self):
         result = await self.client.hello("overcat")
@@ -344,7 +350,9 @@ class TestClientAsync:
         assert result.result() == address
 
     async def test_muxed_address(self):
-        address = Address("MBXCJUTSISFIAS2UENBBO4NXVBJDL7MQHHWM2MSM6S7N4BNNUAO2CAAAAAAAAAAAAHJ22")
+        address = Address(
+            "MBXCJUTSISFIAS2UENBBO4NXVBJDL7MQHHWM2MSM6S7N4BNNUAO2CAAAAAAAAAAAAHJ22"
+        )
         result = await self.client.muxed_address(address)
         assert result.result() == address
 
